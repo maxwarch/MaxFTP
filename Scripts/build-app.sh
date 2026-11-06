@@ -2,6 +2,7 @@
 # Construit build/MaxFtp.app (release, signature ad hoc avec les entitlements).
 #
 # Usage : Scripts/build-app.sh [debug|release]
+#   UNIVERSAL=1 Scripts/build-app.sh   → binaire universel (Apple Silicon + Intel)
 set -euo pipefail
 
 CONFIG="${1:-release}"
@@ -9,8 +10,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/MaxFtp.app"
 
 cd "$ROOT"
-swift build -c "$CONFIG" --product MaxFtp
-BIN="$(swift build -c "$CONFIG" --show-bin-path)/MaxFtp"
+if [[ "${UNIVERSAL:-0}" == "1" ]]; then
+    # Une compilation par architecture, assemblées avec lipo (`--arch` multiple
+    # exige Xcode ; ce chemin marche avec les seuls Command Line Tools).
+    BIN="$ROOT/build/MaxFtp-universal"
+    mkdir -p "$ROOT/build"
+    SLICES=()
+    for TRIPLE in arm64-apple-macosx14.0 x86_64-apple-macosx14.0; do
+        swift build -c "$CONFIG" --product MaxFtp --triple "$TRIPLE"
+        SLICES+=("$(swift build -c "$CONFIG" --triple "$TRIPLE" --show-bin-path)/MaxFtp")
+    done
+    lipo -create "${SLICES[@]}" -output "$BIN"
+else
+    swift build -c "$CONFIG" --product MaxFtp
+    BIN="$(swift build -c "$CONFIG" --show-bin-path)/MaxFtp"
+fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
