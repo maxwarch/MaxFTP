@@ -25,21 +25,19 @@ public struct MainWindowView: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         } detail: {
-            VSplitView {
-                BrowserView(
-                    model: browser,
-                    signets: app.pathBookmarks,
-                    transfers: app.transfers,
-                    onQuickConnect: { showQuickConnect = true },
-                    onNewBookmark: { newBookmark = BookmarkDraft(bookmark: ServerBookmark(), secret: "") }
-                )
-                .frame(minHeight: 200)
-                if let request = browser.terminal, let builder = app.dependencies.terminalPanel,
-                   let configuration = browser.configuration {
+            // Le partage vertical n'existe que terminal ouvert : sans lui, un `VSplitView`
+            // à un seul enfant ne donne pas toute la hauteur à l'explorateur.
+            if let request = browser.terminal, let builder = app.dependencies.terminalPanel,
+               let configuration = browser.configuration {
+                VSplitView {
+                    browserView
+                        .frame(minHeight: 200, maxHeight: .infinity)
                     TerminalContainer(browser: browser, request: request, configuration: configuration, builder: builder)
                         .id(request.id)
-                        .frame(minHeight: 120, idealHeight: 260)
+                        .frame(minHeight: 120, idealHeight: 260, maxHeight: .infinity)
                 }
+            } else {
+                browserView
             }
         }
         .inspector(isPresented: $showInspector) {
@@ -207,6 +205,17 @@ public struct MainWindowView: View {
             guard !Task.isCancelled else { return }
             if NSApplication.shared.isActive { await browser.refreshInBackground() }
         }
+    }
+
+    private var browserView: some View {
+        BrowserView(
+            model: browser,
+            signets: app.pathBookmarks,
+            transfers: app.transfers,
+            onQuickConnect: { showQuickConnect = true },
+            onNewBookmark: { newBookmark = BookmarkDraft(bookmark: ServerBookmark(), secret: "") }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func connect(to configuration: ConnectionConfiguration) {
