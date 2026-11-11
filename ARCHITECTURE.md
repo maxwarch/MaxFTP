@@ -32,6 +32,7 @@ Ce document explique **où mettre quoi** et **pourquoi**. À lire avant toute mo
 |---|---|---|
 | `MaxFtpCore` | Foundation, CryptoKit | tout le reste |
 | `MaxFtpFTP`, `MaxFtpSFTP`, `MaxFtpS3`, `MaxFtpStorage` | Core + leur lib réseau/système | Features, les autres adaptateurs |
+| `MaxFtpTerminal` | Core, SwiftTerm, SwiftUI, AppKit | Features, les adaptateurs réseau |
 | `MaxFtpFeatures` | Core, SwiftUI, AppKit | FTP, SFTP, Storage, NIO, Citadel |
 | `MaxFtpApp` | tout | — |
 
@@ -47,6 +48,7 @@ faux serveur en mémoire. C'est ce qui rend les modèles de vue testables sans r
 | `BookmarkRepository` | Persistance des favoris | `JSONBookmarkRepository` |
 | `PathBookmarkRepository` | Persistance des signets (dossiers / fichiers par serveur) | `JSONPathBookmarkRepository` |
 | `SecretStore` | Mots de passe / passphrases / jeton Cloudflare | `KeychainSecretStore` |
+| `RemoteShell` (actor) | Shell interactif (pseudo-terminal) | `SSHShell` (SFTP), `FakeShell` (tests) |
 | `R2UsageProvider` | Métriques d'un compte Cloudflare R2 | `CloudflareR2Analytics` (S3) |
 | `HostKeyStore` | Clés d'hôte SSH approuvées | `JSONHostKeyStore` |
 | `HostKeyTrustPolicy` | Faire confiance à une clé SSH ? | `InteractiveHostKeyTrustPolicy` (Features) |
@@ -110,9 +112,11 @@ ou l'accesseur statique (modèle).
 Sources/
   MaxFtpCore/        Models/ Protocols/ Transfers/ SSH/ Parsing/
   MaxFtpFTP/         Protocol/ (parseurs purs) Transport/ (NIO) FTPFileSystem*.swift
-  MaxFtpSFTP/        SFTPFileSystem, authentification par clé, validation clé d'hôte
+  MaxFtpSFTP/        SFTPFileSystem, SSHShell, SSHConnector (connexion + clé d'hôte), auth par clé
   MaxFtpS3/          S3FileSystem (R2, S3…) : signature SigV4, réponses XML, chemins → bucket/clé ;
                      CloudflareR2Analytics (métriques R2, GraphQL)
+  MaxFtpTerminal/    TerminalSession (logique) + TerminalPanel (émulateur SwiftTerm), injecté
+                     dans Features via TerminalPanelBuilder
   MaxFtpStorage/     JSONFileStore (générique), Keychain, favoris, known_hosts
   MaxFtpFeatures/    un dossier par fonctionnalité : Bookmarks/ Browser/ Inspector/
                      Transfers/ QuickConnect/ ExternalEditing/ HostKeys/ Settings/

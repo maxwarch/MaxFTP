@@ -137,12 +137,14 @@ struct BrowserContextMenu: View {
             Button("Envoyer des fichiers…") { model.upload(LocalWorkspace.chooseFilesToUpload()) }
             Divider()
             signetToggle(model.currentPath, isDirectory: true)
+            terminalItems(model.currentPath)
             Button("Actualiser") { Task { await model.refresh() } }
         } else {
             let single = targets.count == 1 ? targets.first : nil
 
             if let single, single.canBeOpenedAsDirectory {
                 Button("Ouvrir") { Task { await model.navigate(to: single.path) } }
+                terminalItems(single.path)
             }
             Button("Télécharger…") {
                 if let directory = LocalWorkspace.chooseDownloadDirectory() {
@@ -171,6 +173,15 @@ struct BrowserContextMenu: View {
                 Divider()
             }
             Button("Supprimer…", role: .destructive) { model.requestDeletion(of: ids) }
+        }
+    }
+
+    /// Terminal intégré ou Terminal.app, ouvert dans `directory` (SSH uniquement).
+    @ViewBuilder
+    private func terminalItems(_ directory: RemotePath) -> some View {
+        if model.canOpenTerminal, let configuration = model.configuration {
+            Button("Ouvrir un terminal ici") { model.openTerminal(at: directory) }
+            Button("Ouvrir dans Terminal") { LocalWorkspace.openInTerminal(configuration, at: directory) }
         }
     }
 

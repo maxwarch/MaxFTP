@@ -5,6 +5,8 @@ import MaxFtpFTP
 import MaxFtpS3
 import MaxFtpSFTP
 import MaxFtpStorage
+import MaxFtpTerminal
+import SwiftUI
 
 /// Composition root : le SEUL endroit qui connaît les implémentations concrètes.
 ///
@@ -33,7 +35,16 @@ enum AppComposition {
                 ["id_ed25519", "id_rsa"].map { AppDirectories.sshDirectory.appendingPathComponent($0) }
             },
             userPrompts: userPrompts,
-            r2UsageProvider: CloudflareR2Analytics()
+            r2UsageProvider: CloudflareR2Analytics(),
+            terminalPanel: TerminalPanelBuilder { configuration, directory, onCommandCompleted in
+                AnyView(TerminalPanel {
+                    TerminalSession(
+                        shell: SSHShell(configuration: configuration, hostKeyTrust: hostKeyTrust),
+                        initialDirectory: directory,
+                        onCommandCompleted: onCommandCompleted
+                    )
+                })
+            }
         )
         return AppEnvironment(dependencies: dependencies)
     }

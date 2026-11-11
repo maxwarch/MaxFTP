@@ -9,6 +9,7 @@
 //       ├──► MaxFtpFTP ──────────────────┤
 //       ├──► MaxFtpSFTP ─────────────────┤
 //       ├──► MaxFtpS3 ───────────────────┤
+//       ├──► MaxFtpTerminal ─────────────┤  (émulateur SwiftTerm)
 //       └──► MaxFtpStorage ──────────────┘
 //
 // Règle d'or : MaxFtpCore ne dépend de rien (hors frameworks Apple), et
@@ -34,6 +35,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.30.0"),
         // Même fork que celui imposé par Citadel (sinon conflit d'identité SPM).
         .package(url: "https://github.com/Wellz26/swift-nio-ssh.git", "0.3.4"..<"0.4.0"),
+        // Émulateur de terminal (VT100/xterm) pour AppKit. La 1.99 prépare une 2.0 incompatible.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", "1.19.0"..<"1.20.0"),
     ],
     targets: [
         // MARK: Domaine — modèles, contrats (protocols), logique pure.
@@ -77,6 +80,16 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
 
+        // Terminal intégré : vue SwiftTerm branchée sur un `RemoteShell` du domaine.
+        .target(
+            name: "MaxFtpTerminal",
+            dependencies: [
+                "MaxFtpCore",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
+            swiftSettings: swiftSettings
+        ),
+
         // MARK: Présentation — vues SwiftUI + modèles de vue (@Observable).
         .target(
             name: "MaxFtpFeatures",
@@ -87,7 +100,7 @@ let package = Package(
         // MARK: Exécutable — point d'entrée et assemblage des dépendances.
         .executableTarget(
             name: "MaxFtpApp",
-            dependencies: ["MaxFtpCore", "MaxFtpStorage", "MaxFtpFTP", "MaxFtpSFTP", "MaxFtpS3", "MaxFtpFeatures"],
+            dependencies: ["MaxFtpCore", "MaxFtpStorage", "MaxFtpFTP", "MaxFtpSFTP", "MaxFtpS3", "MaxFtpTerminal", "MaxFtpFeatures"],
             swiftSettings: swiftSettings
         ),
 
@@ -115,6 +128,11 @@ let package = Package(
         .testTarget(
             name: "MaxFtpS3Tests",
             dependencies: ["MaxFtpS3"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "MaxFtpTerminalTests",
+            dependencies: ["MaxFtpTerminal", "MaxFtpTestSupport"],
             swiftSettings: swiftSettings
         ),
         .testTarget(

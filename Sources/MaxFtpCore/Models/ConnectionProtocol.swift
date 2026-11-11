@@ -56,6 +56,8 @@ public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable, Sen
     /// Stockage objet : buckets et clés, pas de vrais dossiers ni de permissions POSIX.
     public var isObjectStorage: Bool { self == .s3 }
     public var supportsPermissions: Bool { !isObjectStorage }
+    /// Seul SSH offre un shell ; FTP n'a pas d'équivalent.
+    public var supportsShell: Bool { self == .sftp }
 }
 
 /// Mode d'ouverture du canal de données FTP.

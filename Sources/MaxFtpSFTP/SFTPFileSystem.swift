@@ -27,47 +27,14 @@ public actor SFTPFileSystem: RemoteFileSystem {
     public func connect() async throws {
         if let sftp, sftp.isActive { return }
         await disconnect()
-
-        let untrusted = HostKeyValidationDelegate.Box()
         do {
-            try await openSession(recordingUntrustedKeyIn: untrusted)
-            return
+            let client = try await SSHConnector.connect(configuration, hostKeyTrust: hostKeyTrust)
+            ssh = client
+            sftp = try await client.openSFTP()
         } catch {
             await disconnect()
-            guard let challenge = untrusted.challenge else {
-                throw Self.translate(error, host: configuration.host)
-            }
-            // Clé inconnue ou changée : on demande à l'utilisateur HORS poignée de main
-            // (il peut prendre son temps), puis on se reconnecte avec la clé désormais approuvée.
-            guard await hostKeyTrust.confirm(challenge) else {
-                throw RemoteError.hostKeyRejected(host: configuration.host)
-            }
+            throw SSHConnector.translate(error, host: configuration.host)
         }
-        do {
-            try await openSession(recordingUntrustedKeyIn: HostKeyValidationDelegate.Box())
-        } catch {
-            await disconnect()
-            throw Self.translate(error, host: configuration.host)
-        }
-    }
-
-    private func openSession(recordingUntrustedKeyIn untrusted: HostKeyValidationDelegate.Box) async throws {
-        let authentication = try SSHAuthenticationFactory.method(for: configuration)
-        let validator = SSHHostKeyValidator.custom(HostKeyValidationDelegate(
-            host: KnownHostIdentifier(host: configuration.host, port: configuration.port),
-            policy: hostKeyTrust,
-            untrusted: untrusted
-        ))
-        let client = try await SSHClient.connect(
-            host: configuration.host,
-            port: configuration.port,
-            authenticationMethod: authentication,
-            hostKeyValidator: validator,
-            reconnect: .never,
-            connectTimeout: .seconds(20)
-        )
-        ssh = client
-        sftp = try await client.openSFTP()
     }
 
     public func disconnect() async {
@@ -196,16 +163,5 @@ public actor SFTPFileSystem: RemoteFileSystem {
             owner: attributes.uidgid.map { String($0.userId) },
             group: attributes.uidgid.map { String($0.groupId) }
         )
-    }
-
-    static func translate(_ error: any Error, host: String) -> any Error {
-        if error is RemoteError || error is CancellationError { return error }
-        // Clé encore refusée après confirmation (elle a changé entre les deux tentatives).
-        if error is HostKeyValidationDelegate.Untrusted { return RemoteError.hostKeyRejected(host: host) }
-        let description = String(describing: error)
-        if description.localizedCaseInsensitiveContains("auth") {
-            return RemoteError.authenticationFailed(nil)
-        }
-        return RemoteError.connectionFailed(description)
     }
 }

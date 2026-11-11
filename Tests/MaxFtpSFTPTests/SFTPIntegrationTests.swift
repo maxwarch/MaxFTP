@@ -104,6 +104,24 @@ struct SFTPIntegrationTests {
             try await fs.connect()
         }
     }
+
+    /// Shell interactif : ouverture dans un dossier, commande, sortie, puis `exit`.
+    @Test func interactiveShell() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("maxftp-shell-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let shell = SSHShell(configuration: try configuration(), hostKeyTrust: RecordingTrustPolicy(answer: true))
+
+        let output = try await shell.start(columns: 80, rows: 24)
+        await shell.send(Data(ShellCommand.changeDirectory(to: RemotePath(directory.path)).utf8))
+        await shell.send(Data("mkdir créé-par-shell && echo FIN-$((40+2))\r".utf8))
+        await shell.send(Data("exit\r".utf8))
+
+        var text = ""
+        for try await chunk in output { text += String(decoding: chunk, as: UTF8.self) }
+        #expect(text.contains("FIN-42"))
+        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("créé-par-shell").path))
+        await shell.close()
+    }
 }
 
 final class ProgressBox: @unchecked Sendable {

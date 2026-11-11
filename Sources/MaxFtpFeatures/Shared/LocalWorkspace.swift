@@ -87,4 +87,18 @@ enum LocalWorkspace {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")
         return panel.runModal() == .OK ? panel.url : nil
     }
+
+    /// Ouvre une session `ssh` dans l'application associée aux scripts `.command`
+    /// (Terminal.app, ou iTerm s'il est réglé ainsi). Le mot de passe est demandé par `ssh`.
+    static func openInTerminal(_ configuration: ConnectionConfiguration, at directory: RemotePath) {
+        let script = root.appendingPathComponent("Terminal/\(UUID().uuidString).command")
+        do {
+            try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try ShellCommand.terminalScript(configuration, at: directory).write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+            NSWorkspace.shared.open(script)
+        } catch {
+            NSSound.beep()
+        }
+    }
 }

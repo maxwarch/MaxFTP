@@ -49,6 +49,8 @@ public final class BrowserModel {
     // MARK: Dépendances
 
     public private(set) var fileSystem: (any RemoteFileSystem)?
+    /// Terminal intégré ouvert sous l'explorateur (une session neuve à chaque demande).
+    public var terminal: TerminalRequest?
     private let factory: any RemoteFileSystemFactory
     private let transfers: TransferQueue
     private let editing: ExternalEditingService
@@ -187,6 +189,7 @@ public final class BrowserModel {
 
     public func disconnect() async {
         editing.stopAll()
+        terminal = nil
         let previous = fileSystem
         fileSystem = nil
         connectionState = .disconnected
@@ -235,6 +238,35 @@ public final class BrowserModel {
         let previousSelection = selection
         await load(currentPath)
         selection = previousSelection.filter { id in items.contains { $0.id == id } }
+    }
+
+    // MARK: Terminal
+
+    /// Seul SSH offre un shell : en FTP ou S3, l'action reste visible mais désactivée.
+    public var canOpenTerminal: Bool {
+        isConnected && configuration?.connectionProtocol.supportsShell == true
+    }
+
+    public func openTerminal(at directory: RemotePath? = nil) {
+        guard canOpenTerminal else { return }
+        terminal = TerminalRequest(directory: directory ?? currentPath)
+    }
+
+    public func toggleTerminal() {
+        if terminal == nil { openTerminal() } else { terminal = nil }
+    }
+
+    /// Actualisation discrète (fin d'une commande du terminal, minuterie) : ni indicateur
+    /// de chargement ni message d'erreur, et rien n'est appliqué si l'utilisateur a changé
+    /// de dossier ou de serveur entre-temps.
+    public func refreshInBackground() async {
+        guard isConnected, !isLoading, let fileSystem else { return }
+        let path = currentPath
+        guard let listing = try? await fileSystem.contentsOfDirectory(at: path),
+              isConnected, !isLoading, currentPath == path, self.fileSystem === fileSystem,
+              Set(listing) != Set(items) else { return }
+        items = listing
+        selection = selection.filter { id in listing.contains { $0.id == id } }
     }
 
     /// Ouvre un signet : le dossier lui-même, ou le dossier parent avec le fichier sélectionné.
@@ -464,4 +496,10 @@ public final class BrowserModel {
         guard !(error is CancellationError) else { return }
         errorMessage = (error as? any LocalizedError)?.errorDescription ?? error.localizedDescription
     }
+}
+
+/// Demande d'ouverture du terminal intégré dans un dossier.
+public struct TerminalRequest: Identifiable, Equatable, Sendable {
+    public let id = UUID()
+    public let directory: RemotePath
 }

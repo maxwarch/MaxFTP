@@ -16,3 +16,4 @@ une ADR acceptée : en créer une qui la remplace).
 | [0007](0007-confirmation-cle-hote-hors-poignee-de-main.md) | Confirmation des clés d'hôte SSH hors de la poignée de main | Acceptée |
 | [0008](0008-stockage-s3-r2.md) | Stockage objet S3 / Cloudflare R2 sans SDK | Acceptée |
 | [0009](0009-tableau-de-bord-r2.md) | Tableau de bord R2 via l'API GraphQL de Cloudflare | Acceptée |
+| [0010](0010-terminal-integre-et-actualisation-directe.md) | Terminal SSH intégré et actualisation en direct | Acceptée |

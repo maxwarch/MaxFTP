@@ -1,4 +1,5 @@
 import Foundation
+import MaxFtpCore
 import SwiftUI
 
 /// Clés `UserDefaults` des préférences, centralisées pour éviter les fautes de frappe.
@@ -7,9 +8,24 @@ public enum AppSettings {
     public static let maxConcurrentTransfersKey = "maxConcurrentTransfers"
     public static let previewSizeLimitKey = "previewSizeLimitMB"
     public static let editorChoicesKey = "editorChoices"
+    public static let autoRefreshSecondsKey = "autoRefreshSeconds"
 
     public static let defaultMaxConcurrentTransfers = 2
     public static let defaultPreviewSizeLimitMB = 5
+    public static let defaultAutoRefreshSeconds = 5
+    /// Choix proposés dans les Réglages (0 = désactivée).
+    public static let autoRefreshChoices = [0, 3, 5, 10, 30, 60]
+
+    /// Intervalle d'actualisation automatique du dossier courant, `nil` si désactivée.
+    /// Jamais en S3 : chaque listage est une opération de classe A facturée.
+    public static func autoRefreshInterval(for connectionProtocol: ConnectionProtocol, seconds: Int) -> Duration? {
+        guard seconds > 0, !connectionProtocol.isObjectStorage else { return nil }
+        return .seconds(seconds)
+    }
+
+    public static var autoRefreshSeconds: Int {
+        UserDefaults.standard.object(forKey: autoRefreshSecondsKey) as? Int ?? defaultAutoRefreshSeconds
+    }
 
     public static var maxConcurrentTransfers: Int {
         let value = UserDefaults.standard.integer(forKey: maxConcurrentTransfersKey)
@@ -39,6 +55,7 @@ public struct SettingsView: View {
     @AppStorage(AppSettings.maxConcurrentTransfersKey) private var maxConcurrentTransfers = AppSettings.defaultMaxConcurrentTransfers
     @AppStorage(AppSettings.previewSizeLimitKey) private var previewSizeLimit = AppSettings.defaultPreviewSizeLimitMB
     @AppStorage(AppSettings.editorChoicesKey) private var editorChoicesData = Data()
+    @AppStorage(AppSettings.autoRefreshSecondsKey) private var autoRefreshSeconds = AppSettings.defaultAutoRefreshSeconds
 
     public init() {}
 
@@ -53,6 +70,13 @@ public struct SettingsView: View {
                 Toggle("Afficher les fichiers cachés", isOn: $showHiddenFiles)
                 Stepper("Transferts simultanés : \(maxConcurrentTransfers)", value: $maxConcurrentTransfers, in: 1...8)
                 Stepper("Aperçu automatique jusqu'à \(previewSizeLimit) Mo", value: $previewSizeLimit, in: 1...100)
+                Picker("Actualisation automatique", selection: $autoRefreshSeconds) {
+                    ForEach(AppSettings.autoRefreshChoices, id: \.self) { seconds in
+                        Text(seconds == 0 ? "Désactivée" : "Toutes les \(seconds) s").tag(seconds)
+                    }
+                }
+                .help("Relit le dossier courant pendant que l'app est au premier plan (jamais en S3, où chaque listage est facturé). "
+                    + "Le terminal intégré déclenche aussi une actualisation après chaque commande.")
             }
 
             Section {

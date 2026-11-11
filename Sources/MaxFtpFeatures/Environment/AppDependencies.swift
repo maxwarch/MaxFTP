@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import MaxFtpCore
 
 /// Tout ce dont la couche présentation a besoin, exprimé UNIQUEMENT en contrats du domaine.
@@ -18,6 +19,8 @@ public struct AppDependencies: Sendable {
     public var userPrompts: UserPromptTracker
     /// Métriques Cloudflare R2 ; `nil` = pas de tableau de bord (tests).
     public var r2UsageProvider: (any R2UsageProvider)?
+    /// Terminal intégré ; `nil` = indisponible (tests).
+    public var terminalPanel: TerminalPanelBuilder?
 
     public init(
         bookmarkRepository: any BookmarkRepository,
@@ -27,8 +30,10 @@ public struct AppDependencies: Sendable {
         sshConfig: @escaping @Sendable () -> SSHConfig = { SSHConfig(contents: "") },
         defaultIdentityFiles: @escaping @Sendable () -> [URL] = { [] },
         userPrompts: UserPromptTracker = UserPromptTracker(),
-        r2UsageProvider: (any R2UsageProvider)? = nil
+        r2UsageProvider: (any R2UsageProvider)? = nil,
+        terminalPanel: TerminalPanelBuilder? = nil
     ) {
+        self.terminalPanel = terminalPanel
         self.userPrompts = userPrompts
         self.r2UsageProvider = r2UsageProvider
         self.bookmarkRepository = bookmarkRepository
@@ -37,5 +42,20 @@ public struct AppDependencies: Sendable {
         self.fileSystemFactory = fileSystemFactory
         self.sshConfig = sshConfig
         self.defaultIdentityFiles = defaultIdentityFiles
+    }
+}
+
+/// Fabrique la vue du terminal intégré. L'émulateur (SwiftTerm) et le shell SSH sont
+/// fournis par la composition root : MaxFtpFeatures n'en connaît que cette signature.
+public struct TerminalPanelBuilder: Sendable {
+    /// Configuration, dossier d'ouverture, rappel à la fin de chaque commande.
+    public typealias Make = @MainActor @Sendable (
+        ConnectionConfiguration, RemotePath, @escaping @MainActor @Sendable () -> Void
+    ) -> AnyView
+
+    let make: Make
+
+    public init(_ make: @escaping Make) {
+        self.make = make
     }
 }

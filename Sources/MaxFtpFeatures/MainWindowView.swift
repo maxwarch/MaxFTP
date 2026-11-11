@@ -1,4 +1,5 @@
 import MaxFtpCore
+import AppKit
 import SwiftUI
 
 /// Une fenêtre = une session : favoris | explorateur | inspecteur.
@@ -9,6 +10,7 @@ public struct MainWindowView: View {
     @State private var showQuickConnect = false
     @State private var newBookmark: BookmarkDraft?
     @State private var r2Dashboard: R2DashboardModel?
+    @AppStorage(AppSettings.autoRefreshSecondsKey) private var autoRefreshSeconds = AppSettings.defaultAutoRefreshSeconds
 
     public init(app: AppEnvironment) {
         self.app = app
@@ -23,13 +25,22 @@ public struct MainWindowView: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         } detail: {
-            BrowserView(
-                model: browser,
-                signets: app.pathBookmarks,
-                transfers: app.transfers,
-                onQuickConnect: { showQuickConnect = true },
-                onNewBookmark: { newBookmark = BookmarkDraft(bookmark: ServerBookmark(), secret: "") }
-            )
+            VSplitView {
+                BrowserView(
+                    model: browser,
+                    signets: app.pathBookmarks,
+                    transfers: app.transfers,
+                    onQuickConnect: { showQuickConnect = true },
+                    onNewBookmark: { newBookmark = BookmarkDraft(bookmark: ServerBookmark(), secret: "") }
+                )
+                .frame(minHeight: 200)
+                if let request = browser.terminal, let builder = app.dependencies.terminalPanel,
+                   let configuration = browser.configuration {
+                    TerminalContainer(browser: browser, request: request, configuration: configuration, builder: builder)
+                        .id(request.id)
+                        .frame(minHeight: 120, idealHeight: 260)
+                }
+            }
         }
         .inspector(isPresented: $showInspector) {
             InspectorView(browser: browser)
@@ -109,6 +120,17 @@ public struct MainWindowView: View {
                     .help("Stockage, requêtes et budget du compte Cloudflare R2")
                 }
 
+                Button {
+                    browser.toggleTerminal()
+                } label: {
+                    Label("Terminal", systemImage: "terminal")
+                }
+                .disabled(!browser.canOpenTerminal || app.dependencies.terminalPanel == nil)
+                .keyboardShortcut("`", modifiers: .control)
+                .help(browser.isConnected && !browser.canOpenTerminal
+                    ? "Terminal indisponible : seul SFTP (SSH) donne accès à un shell."
+                    : "Terminal SSH dans le dossier courant (⌃`)")
+
                 TransfersToolbarButton(queue: app.transfers)
 
                 Button {
@@ -169,10 +191,62 @@ public struct MainWindowView: View {
         .onDisappear {
             Task { await browser.disconnect() }
         }
+        .task(id: autoRefreshKey) { await autoRefresh() }
         .frame(minWidth: 900, minHeight: 500)
+    }
+
+    /// Relancée à chaque changement de serveur ou de réglage.
+    private var autoRefreshKey: String { "\(browser.serverKey ?? "")|\(autoRefreshSeconds)" }
+
+    /// Relit le dossier courant à intervalle régulier, seulement quand l'app est au premier plan.
+    private func autoRefresh() async {
+        guard let proto = browser.configuration?.connectionProtocol, browser.isConnected,
+              let interval = AppSettings.autoRefreshInterval(for: proto, seconds: autoRefreshSeconds) else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: interval)
+            guard !Task.isCancelled else { return }
+            if NSApplication.shared.isActive { await browser.refreshInBackground() }
+        }
     }
 
     private func connect(to configuration: ConnectionConfiguration) {
         Task { await browser.connect(to: configuration) }
+    }
+}
+
+/// Bandeau du terminal intégré (titre, Terminal.app, fermeture) + l'émulateur.
+private struct TerminalContainer: View {
+    let browser: BrowserModel
+    let request: TerminalRequest
+    let configuration: ConnectionConfiguration
+    let builder: TerminalPanelBuilder
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Label("\(configuration.displayName) : \(request.directory.string)", systemImage: "terminal")
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button("Ouvrir dans Terminal") { LocalWorkspace.openInTerminal(configuration, at: request.directory) }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                Button {
+                    browser.terminal = nil
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .help("Fermer le terminal")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(.bar)
+            Divider()
+            builder.make(configuration, request.directory) { [browser] in
+                Task { await browser.refreshInBackground() }
+            }
+        }
     }
 }

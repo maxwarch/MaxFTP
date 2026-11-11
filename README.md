@@ -34,6 +34,11 @@ Prérequis : Xcode 16+ ou Command Line Tools avec Swift 6.
   Access Key ID + Secret Access Key d'un jeton d'API R2, région `auto`. La racine liste
   les buckets ; les dossiers sont des préfixes. Création/suppression de buckets, uploads
   multipart au-delà de 100 Mio.
+- **Terminal SSH intégré** (SFTP) : bouton Terminal (⌃\`) ou clic droit « Ouvrir un
+  terminal ici » ; s'ouvre sous l'explorateur dans le dossier visé. « Ouvrir dans
+  Terminal » lance plutôt `ssh` dans Terminal.app / iTerm. Indisponible en FTP (pas de shell).
+- **Actualisation en direct** : l'explorateur se met à jour après chaque commande du
+  terminal, et relit le dossier courant toutes les 5 s (réglable, jamais en S3).
 - **Tableau de bord R2** (bouton graphique de la barre d'outils) : stockage, requêtes
   classe A / B et coût estimé du mois face au niveau gratuit, taille de chaque bucket.
   Demande un jeton d'API Cloudflare « Account Analytics : Read » (rangé dans le trousseau).
@@ -74,4 +79,5 @@ et les décisions dans **[docs/adr](docs/adr/README.md)**.
 - Clés ECDSA et agent SSH (`ssh-agent`) non pris en charge pour l'instant.
 - S3 / R2 : pas de permissions (CHMOD masqué) ; renommer un dossier copie chaque objet ;
   un objet de plus de 5 Go ne peut pas être renommé.
+- Terminal intégré : macOS 15 requis (sinon « Ouvrir dans Terminal »).
 - Glisser des fichiers distants **vers** le Finder : pas encore implémenté (utiliser « Télécharger… »).

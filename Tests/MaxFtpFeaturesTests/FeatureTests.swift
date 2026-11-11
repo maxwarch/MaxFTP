@@ -57,6 +57,60 @@ struct BrowserModelTests {
         #expect(model.errorMessage == nil)
     }
 
+    @Test func backgroundRefreshShowsExternalChangesAndKeepsSelection() async throws {
+        let model = makeModel()
+        await model.connect(to: .test)
+        model.selection = ["/home/test/index.html"]
+
+        // Création « dans le terminal » : directement sur le serveur, hors du modèle.
+        try await server.createDirectory(at: "/home/test/nouveau")
+        await model.refreshInBackground()
+        #expect(model.visibleItems.map(\.name) == ["assets", "nouveau", "index.html"])
+        #expect(model.selection == ["/home/test/index.html"])
+        #expect(!model.isLoading && model.errorMessage == nil)
+
+        try await server.removeFile(at: "/home/test/index.html")
+        await model.refreshInBackground()
+        #expect(model.selection.isEmpty)
+    }
+
+    @Test func backgroundRefreshStaysSilentOnErrors() async throws {
+        let model = makeModel()
+        await model.connect(to: .test)
+        await model.navigate(to: "/home/test/assets")
+        try await server.removeFile(at: "/home/test/assets/app.js")
+        try await server.removeDirectory(at: "/home/test/assets")
+        await model.refreshInBackground()
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test func terminalOnlyOverSSH() async {
+        let model = makeModel()
+        #expect(!model.canOpenTerminal)
+        await model.connect(to: .test)  // SFTP
+        model.openTerminal(at: "/home/test/assets")
+        #expect(model.terminal?.directory == "/home/test/assets")
+        model.toggleTerminal()
+        #expect(model.terminal == nil)
+        model.toggleTerminal()
+        #expect(model.terminal?.directory == "/home/test")
+
+        await model.disconnect()
+        #expect(model.terminal == nil)
+
+        var ftp = ConnectionConfiguration.test
+        ftp.connectionProtocol = .ftp
+        await model.connect(to: ftp)
+        model.openTerminal()
+        #expect(!model.canOpenTerminal && model.terminal == nil)
+    }
+
+    @Test func autoRefreshNeverPollsObjectStorage() {
+        #expect(AppSettings.autoRefreshInterval(for: .sftp, seconds: 5) == .seconds(5))
+        #expect(AppSettings.autoRefreshInterval(for: .ftp, seconds: 0) == nil)
+        #expect(AppSettings.autoRefreshInterval(for: .s3, seconds: 5) == nil)
+    }
+
     @Test func rejectsInvalidNames() async {
         let model = makeModel()
         await model.connect(to: .test)
