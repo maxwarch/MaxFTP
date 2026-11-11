@@ -4,28 +4,28 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>fr</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<key>CFBundleDisplayName</key>
+	<string>MaxFtp</string>
 	<key>CFBundleExecutable</key>
 	<string>MaxFtp</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.maxftp.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>MaxFtp</string>
-	<key>CFBundleDisplayName</key>
-	<string>MaxFtp</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>2</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>
