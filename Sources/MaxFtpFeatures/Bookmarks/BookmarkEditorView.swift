@@ -14,6 +14,8 @@ struct BookmarkEditorView: View {
         self.onSave = onSave
     }
 
+    private var isS3: Bool { bookmark.connectionProtocol.isObjectStorage }
+
     private var usesKey: Bool {
         bookmark.connectionProtocol.supportsKeyAuthentication && bookmark.authenticationKind == .privateKey
     }
@@ -29,9 +31,16 @@ struct BookmarkEditorView: View {
                     .onChange(of: bookmark.connectionProtocol) { old, new in
                         if bookmark.port == old.defaultPort { bookmark.port = new.defaultPort }
                     }
-                    TextField("Hôte", text: $bookmark.host, prompt: Text("ftp.exemple.fr"))
-                    TextField("Port", value: $bookmark.port, format: .number.grouping(.never))
-                    TextField("Utilisateur", text: $bookmark.username)
+                    if isS3 {
+                        TextField("Point de terminaison", text: $bookmark.host,
+                                  prompt: Text("<id-compte>.r2.cloudflarestorage.com"))
+                        TextField("Région", text: $bookmark.s3Region, prompt: Text("auto"))
+                        TextField("Access Key ID", text: $bookmark.username)
+                    } else {
+                        TextField("Hôte", text: $bookmark.host, prompt: Text("ftp.exemple.fr"))
+                        TextField("Port", value: $bookmark.port, format: .number.grouping(.never))
+                        TextField("Utilisateur", text: $bookmark.username)
+                    }
                 }
 
                 Section("Authentification") {
@@ -56,6 +65,13 @@ struct BookmarkEditorView: View {
                             }
                         }
                         SecureField("Passphrase", text: $secret, prompt: Text("Aucune"))
+                    } else if isS3 {
+                        SecureField("Secret Access Key", text: $secret)
+                        Text("Cloudflare R2 : tableau de bord › R2 › Gérer les jetons d'API R2. "
+                            + "La région est « auto ». Si le jeton est limité à un bucket, "
+                            + "indiquez-le comme dossier initial (/nom-du-bucket).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     } else {
                         SecureField("Mot de passe", text: $secret)
                     }
@@ -68,7 +84,7 @@ struct BookmarkEditorView: View {
                     TextField("Dossier initial", text: Binding(
                         get: { bookmark.initialPath ?? "" },
                         set: { bookmark.initialPath = $0.isEmpty ? nil : $0 }
-                    ), prompt: Text("Dossier de connexion"))
+                    ), prompt: Text(isS3 ? "/nom-du-bucket (sinon liste des buckets)" : "Dossier de connexion"))
                     if bookmark.connectionProtocol.isFTPFamily {
                         Picker("Mode de transfert", selection: $bookmark.ftpDataMode) {
                             ForEach(FTPDataConnectionMode.allCases) { Text($0.displayName).tag($0) }

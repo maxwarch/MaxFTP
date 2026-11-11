@@ -16,6 +16,8 @@ public struct AppDependencies: Sendable {
     public var defaultIdentityFiles: @Sendable () -> [URL]
     /// Questions en cours à l'utilisateur (suspendent les délais de connexion).
     public var userPrompts: UserPromptTracker
+    /// Métriques Cloudflare R2 ; `nil` = pas de tableau de bord (tests).
+    public var r2UsageProvider: (any R2UsageProvider)?
 
     public init(
         bookmarkRepository: any BookmarkRepository,
@@ -24,9 +26,11 @@ public struct AppDependencies: Sendable {
         fileSystemFactory: any RemoteFileSystemFactory,
         sshConfig: @escaping @Sendable () -> SSHConfig = { SSHConfig(contents: "") },
         defaultIdentityFiles: @escaping @Sendable () -> [URL] = { [] },
-        userPrompts: UserPromptTracker = UserPromptTracker()
+        userPrompts: UserPromptTracker = UserPromptTracker(),
+        r2UsageProvider: (any R2UsageProvider)? = nil
     ) {
         self.userPrompts = userPrompts
+        self.r2UsageProvider = r2UsageProvider
         self.bookmarkRepository = bookmarkRepository
         self.pathBookmarkRepository = pathBookmarkRepository
         self.secretStore = secretStore

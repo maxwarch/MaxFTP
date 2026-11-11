@@ -22,6 +22,8 @@ public struct ConnectionConfiguration: Hashable, Sendable {
     public var ftpDataMode: FTPDataConnectionMode
     /// FTPS uniquement : accepte un certificat auto-signé ou expiré.
     public var allowsUntrustedCertificates: Bool
+    /// S3 uniquement : région de signature (`auto` pour Cloudflare R2).
+    public var s3Region: String
 
     public init(
         connectionProtocol: ConnectionProtocol,
@@ -31,7 +33,8 @@ public struct ConnectionConfiguration: Hashable, Sendable {
         credential: Credential,
         initialPath: RemotePath? = nil,
         ftpDataMode: FTPDataConnectionMode = .passive,
-        allowsUntrustedCertificates: Bool = false
+        allowsUntrustedCertificates: Bool = false,
+        s3Region: String = ConnectionConfiguration.defaultS3Region
     ) {
         self.connectionProtocol = connectionProtocol
         self.host = host
@@ -41,11 +44,16 @@ public struct ConnectionConfiguration: Hashable, Sendable {
         self.initialPath = initialPath
         self.ftpDataMode = ftpDataMode
         self.allowsUntrustedCertificates = allowsUntrustedCertificates
+        self.s3Region = s3Region
     }
 
+    /// Région acceptée par Cloudflare R2.
+    public static let defaultS3Region = "auto"
+
     /// `user@host` (ou `host:port` si le port n'est pas celui par défaut).
+    /// En S3, l'« utilisateur » est un identifiant de clé d'accès : on ne l'affiche pas.
     public var displayName: String {
-        var result = username.isEmpty ? host : "\(username)@\(host)"
+        var result = username.isEmpty || connectionProtocol.isObjectStorage ? host : "\(username)@\(host)"
         if port != connectionProtocol.defaultPort { result += ":\(port)" }
         return result
     }

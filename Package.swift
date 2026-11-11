@@ -1,6 +1,6 @@
 // swift-tools-version: 6.0
 //
-// MaxFtp — client FTP / FTPS / SFTP natif pour macOS.
+// MaxFtp — client FTP / FTPS / SFTP / S3 natif pour macOS.
 //
 // Graphe des modules (les flèches pointent vers les dépendances) :
 //
@@ -8,6 +8,7 @@
 //       │                                ▲
 //       ├──► MaxFtpFTP ──────────────────┤
 //       ├──► MaxFtpSFTP ─────────────────┤
+//       ├──► MaxFtpS3 ───────────────────┤
 //       └──► MaxFtpStorage ──────────────┘
 //
 // Règle d'or : MaxFtpCore ne dépend de rien (hors frameworks Apple), et
@@ -69,6 +70,13 @@ let package = Package(
             swiftSettings: swiftSettings
         ),
 
+        // Stockage objet S3 / Cloudflare R2 : URLSession + signature SigV4 (CryptoKit).
+        .target(
+            name: "MaxFtpS3",
+            dependencies: ["MaxFtpCore"],
+            swiftSettings: swiftSettings
+        ),
+
         // MARK: Présentation — vues SwiftUI + modèles de vue (@Observable).
         .target(
             name: "MaxFtpFeatures",
@@ -79,7 +87,7 @@ let package = Package(
         // MARK: Exécutable — point d'entrée et assemblage des dépendances.
         .executableTarget(
             name: "MaxFtpApp",
-            dependencies: ["MaxFtpCore", "MaxFtpStorage", "MaxFtpFTP", "MaxFtpSFTP", "MaxFtpFeatures"],
+            dependencies: ["MaxFtpCore", "MaxFtpStorage", "MaxFtpFTP", "MaxFtpSFTP", "MaxFtpS3", "MaxFtpFeatures"],
             swiftSettings: swiftSettings
         ),
 
@@ -102,6 +110,11 @@ let package = Package(
         .testTarget(
             name: "MaxFtpSFTPTests",
             dependencies: ["MaxFtpSFTP"],
+            swiftSettings: swiftSettings
+        ),
+        .testTarget(
+            name: "MaxFtpS3Tests",
+            dependencies: ["MaxFtpS3"],
             swiftSettings: swiftSettings
         ),
         .testTarget(

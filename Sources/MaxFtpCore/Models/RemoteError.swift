@@ -15,6 +15,7 @@ public enum RemoteError: LocalizedError, Equatable, Sendable {
     case protocolViolation(String)
     case serverError(code: Int, message: String)
     case localFileError(String)
+    case unsupportedOperation(String)
 
     public var errorDescription: String? {
         switch self {
@@ -38,6 +39,8 @@ public enum RemoteError: LocalizedError, Equatable, Sendable {
             "Erreur serveur \(code) : \(message)"
         case .localFileError(let detail):
             "Erreur de fichier local : \(detail)"
+        case .unsupportedOperation(let detail):
+            "Opération non prise en charge : \(detail)"
         }
     }
 }

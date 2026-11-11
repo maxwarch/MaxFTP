@@ -8,6 +8,7 @@ public struct MainWindowView: View {
     @State private var showInspector = true
     @State private var showQuickConnect = false
     @State private var newBookmark: BookmarkDraft?
+    @State private var r2Dashboard: R2DashboardModel?
 
     public init(app: AppEnvironment) {
         self.app = app
@@ -99,6 +100,15 @@ public struct MainWindowView: View {
                 .disabled(!browser.isConnected)
                 .help("Actualiser (⌘R)")
 
+                if browser.isConnected, app.makeR2DashboardModel(for: browser.configuration) != nil {
+                    Button {
+                        r2Dashboard = app.makeR2DashboardModel(for: browser.configuration)
+                    } label: {
+                        Label("Tableau de bord R2", systemImage: "chart.bar.xaxis")
+                    }
+                    .help("Stockage, requêtes et budget du compte Cloudflare R2")
+                }
+
                 TransfersToolbarButton(queue: app.transfers)
 
                 Button {
@@ -114,6 +124,9 @@ public struct MainWindowView: View {
                 showQuickConnect = false
                 connect(to: configuration)
             }
+        }
+        .sheet(item: $r2Dashboard) { model in
+            R2DashboardView(model: model)
         }
         .sheet(item: $newBookmark) { draft in
             BookmarkEditorView(draft: draft) { bookmark, secret in

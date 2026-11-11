@@ -3,7 +3,8 @@ import Foundation
 /// Résultat de l'analyse du champ « Connexion rapide ».
 ///
 /// Formats acceptés :
-/// - `sftp://user:pass@host:2222/var/www` (schémas : sftp, ssh, ftp, ftps, ftpes)
+/// - `sftp://user:pass@host:2222/var/www` (schémas : sftp, ssh, ftp, ftps, ftpes, s3)
+/// - `s3://ACCESS_KEY:SECRET@compte.r2.cloudflarestorage.com/bucket`
 /// - `user@host`, `host:port`, `host` (SFTP par défaut)
 /// - un alias de `~/.ssh/config`
 public struct QuickConnectTarget: Equatable, Sendable {

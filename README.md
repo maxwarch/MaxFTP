@@ -1,6 +1,6 @@
 # MaxFtp
 
-Client **FTP / FTPS / SFTP** 100 % natif pour macOS 14+ — Swift 6, SwiftUI, AppKit.
+Client **FTP / FTPS / SFTP / S3 (Cloudflare R2)** 100 % natif pour macOS 14+ — Swift 6, SwiftUI, AppKit.
 Aucune technologie web.
 
 ## Installation
@@ -28,8 +28,15 @@ Prérequis : Xcode 16+ ou Command Line Tools avec Swift 6.
 
 ## Fonctionnalités
 
-- **Favoris** (barre latérale) : SFTP, FTP, FTPS explicite/implicite ; mot de passe
-  ou clé SSH (ed25519, RSA, avec passphrase) ; secrets dans le **trousseau macOS**.
+- **Favoris** (barre latérale) : SFTP, FTP, FTPS explicite/implicite, **S3 / Cloudflare R2** ;
+  mot de passe ou clé SSH (ed25519, RSA, avec passphrase) ; secrets dans le **trousseau macOS**.
+- **Cloudflare R2 / S3** : point de terminaison `<id-compte>.r2.cloudflarestorage.com`,
+  Access Key ID + Secret Access Key d'un jeton d'API R2, région `auto`. La racine liste
+  les buckets ; les dossiers sont des préfixes. Création/suppression de buckets, uploads
+  multipart au-delà de 100 Mio.
+- **Tableau de bord R2** (bouton graphique de la barre d'outils) : stockage, requêtes
+  classe A / B et coût estimé du mois face au niveau gratuit, taille de chaque bucket.
+  Demande un jeton d'API Cloudflare « Account Analytics : Read » (rangé dans le trousseau).
   Une connexion rapide s'enregistre en favori d'un clic (juste un nom à donner).
 - **Signets** : dossiers ou fichiers précis rangés sous chaque favori ; un clic s'y connecte
   et y mène directement.
@@ -65,4 +72,6 @@ et les décisions dans **[docs/adr](docs/adr/README.md)**.
 - SFTP : seul le format OpenSSH des clés est géré (pas les anciennes clés PEM
   `BEGIN RSA PRIVATE KEY` ; les convertir avec `ssh-keygen -p -f clé`).
 - Clés ECDSA et agent SSH (`ssh-agent`) non pris en charge pour l'instant.
+- S3 / R2 : pas de permissions (CHMOD masqué) ; renommer un dossier copie chaque objet ;
+  un objet de plus de 5 Go ne peut pas être renommé.
 - Glisser des fichiers distants **vers** le Finder : pas encore implémenté (utiliser « Télécharger… »).

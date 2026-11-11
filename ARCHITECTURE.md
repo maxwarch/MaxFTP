@@ -1,6 +1,6 @@
 # Architecture de MaxFtp
 
-Client FTP / FTPS / SFTP natif macOS (Swift 6, SwiftUI, macOS 14+).
+Client FTP / FTPS / SFTP / S3 (Cloudflare R2) natif macOS (Swift 6, SwiftUI, macOS 14+).
 Ce document explique **où mettre quoi** et **pourquoi**. À lire avant toute modification.
 
 ## 1. Vue d'ensemble : Ports & Adapters (architecture hexagonale)
@@ -31,7 +31,7 @@ Ce document explique **où mettre quoi** et **pourquoi**. À lire avant toute mo
 | Module | Peut importer | Ne doit JAMAIS importer |
 |---|---|---|
 | `MaxFtpCore` | Foundation, CryptoKit | tout le reste |
-| `MaxFtpFTP`, `MaxFtpSFTP`, `MaxFtpStorage` | Core + leur lib réseau/système | Features, les autres adaptateurs |
+| `MaxFtpFTP`, `MaxFtpSFTP`, `MaxFtpS3`, `MaxFtpStorage` | Core + leur lib réseau/système | Features, les autres adaptateurs |
 | `MaxFtpFeatures` | Core, SwiftUI, AppKit | FTP, SFTP, Storage, NIO, Citadel |
 | `MaxFtpApp` | tout | — |
 
@@ -42,11 +42,12 @@ faux serveur en mémoire. C'est ce qui rend les modèles de vue testables sans r
 
 | Protocole | Rôle | Implémentation(s) |
 |---|---|---|
-| `RemoteFileSystem` (actor) | Opérations sur le serveur | `SFTPFileSystem`, `FTPFileSystem`, `InMemoryFileSystem` (tests) |
+| `RemoteFileSystem` (actor) | Opérations sur le serveur | `SFTPFileSystem`, `FTPFileSystem`, `S3FileSystem`, `InMemoryFileSystem` (tests) |
 | `RemoteFileSystemFactory` | Choisit l'adaptateur selon le protocole | `ProtocolFileSystemFactory` (App) |
 | `BookmarkRepository` | Persistance des favoris | `JSONBookmarkRepository` |
 | `PathBookmarkRepository` | Persistance des signets (dossiers / fichiers par serveur) | `JSONPathBookmarkRepository` |
-| `SecretStore` | Mots de passe / passphrases | `KeychainSecretStore` |
+| `SecretStore` | Mots de passe / passphrases / jeton Cloudflare | `KeychainSecretStore` |
+| `R2UsageProvider` | Métriques d'un compte Cloudflare R2 | `CloudflareR2Analytics` (S3) |
 | `HostKeyStore` | Clés d'hôte SSH approuvées | `JSONHostKeyStore` |
 | `HostKeyTrustPolicy` | Faire confiance à une clé SSH ? | `InteractiveHostKeyTrustPolicy` (Features) |
 
@@ -59,7 +60,7 @@ faux serveur en mémoire. C'est ce qui rend les modèles de vue testables sans r
 | **Template Method** | extension de `RemoteFileSystem` (`removeItem`, `walk`, `createDirectoryIfNeeded`) | Les adaptateurs n'écrivent que des primitives ; le récursif est écrit une fois |
 | **Command** | `TransferPlan.Step` + `TransferExecutor` | Planifier (taille totale connue) puis exécuter ; testable sans réseau |
 | **Repository** | `BookmarkRepository` | Passer à SwiftData = une nouvelle classe + une ligne dans `AppComposition` |
-| **MVVM** | `BrowserModel`, `BookmarksModel`, `PathBookmarksModel`, `TransferQueue`, `PreviewModel` (`@Observable @MainActor`) | Les vues sont déclaratives et sans logique ; la logique est testable |
+| **MVVM** | `BrowserModel`, `BookmarksModel`, `PathBookmarksModel`, `TransferQueue`, `PreviewModel`, `R2DashboardModel` (`@Observable @MainActor`) | Les vues sont déclaratives et sans logique ; la logique est testable |
 | **Dependency Injection** | `AppDependencies` (constructeur) + `AppEnvironment` (`.environment`) | Aucun singleton caché ; les tests injectent des doublures |
 | **Composition Root** | `MaxFtpApp/AppComposition.swift` | Un seul endroit pour câbler l'app |
 | **Actor isolation** | tous les adaptateurs réseau | Swift 6 strict concurrency : pas de data race possible |
@@ -110,9 +111,12 @@ Sources/
   MaxFtpCore/        Models/ Protocols/ Transfers/ SSH/ Parsing/
   MaxFtpFTP/         Protocol/ (parseurs purs) Transport/ (NIO) FTPFileSystem*.swift
   MaxFtpSFTP/        SFTPFileSystem, authentification par clé, validation clé d'hôte
+  MaxFtpS3/          S3FileSystem (R2, S3…) : signature SigV4, réponses XML, chemins → bucket/clé ;
+                     CloudflareR2Analytics (métriques R2, GraphQL)
   MaxFtpStorage/     JSONFileStore (générique), Keychain, favoris, known_hosts
   MaxFtpFeatures/    un dossier par fonctionnalité : Bookmarks/ Browser/ Inspector/
                      Transfers/ QuickConnect/ ExternalEditing/ HostKeys/ Settings/
+                     R2Dashboard/
   MaxFtpApp/         @main + AppComposition
   MaxFtpTestSupport/ doublures en mémoire (serveur, stores)
 Tests/               un target par module ; *IntegrationTests = opt-in (vrai serveur)
@@ -126,5 +130,7 @@ docs/adr/            décisions d'architecture et leurs raisons
   - FTP / FTPS : `Scripts/test-ftp-server.py` puis
     `MAXFTP_FTP_TEST_PORT=2121 MAXFTP_FTPS_TEST_PORT=2122 swift test --filter FTPIntegration`
   - SFTP : `Scripts/test-sshd.sh` (affiche la commande à lancer).
+  - S3 / R2 : variables `MAXFTP_S3_TEST_*` (voir `S3IntegrationTests.swift`) puis
+    `swift test --filter S3Integration`.
 - Toute logique non triviale doit vivre dans une fonction pure ou derrière un protocole,
   pour être testable sans réseau ni UI.

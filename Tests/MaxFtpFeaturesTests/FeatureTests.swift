@@ -596,3 +596,63 @@ struct AppSettingsTests {
         #expect(defaults.bool(forKey: AppSettings.showHiddenFilesKey))
     }
 }
+
+@MainActor
+@Suite("Tableau de bord R2 (modèle)")
+struct R2DashboardModelTests {
+    let accountID = "0123456789abcdef0123456789abcdef"
+    let usage = R2Usage(
+        period: DateInterval(start: Date(timeIntervalSince1970: 0), duration: 1),
+        storageSamples: [],
+        requestsByAction: ["PutObject": 900_000]
+    )
+
+    @Test func asksForTokenThenLoads() async throws {
+        let provider = StubR2UsageProvider(.success(usage))
+        let secrets = InMemorySecretStore()
+        let model = R2DashboardModel(accountID: accountID, provider: provider, secretStore: secrets)
+
+        await model.refresh()
+        #expect(model.state == .needsToken)
+        #expect(provider.receivedTokens.isEmpty)
+
+        await model.saveToken("  jeton \n")
+        #expect(provider.receivedTokens == ["jeton"])
+        #expect(try secrets.secret(for: R2Account.apiTokenSecretAccount(accountID: accountID)) == "jeton")
+        guard case .loaded(let bill) = model.state else { Issue.record("attendu : chargé"); return }
+        #expect(bill.requests(.classA) == 900_000)
+        #expect(QuotaLevel(ratio: bill.classARatio) == .nearLimit)
+
+        model.forgetToken()
+        #expect(model.state == .needsToken)
+        #expect(!model.hasToken)
+    }
+
+    @Test func showsProviderErrors() async {
+        let provider = StubR2UsageProvider(.failure(RemoteError.authenticationFailed("jeton refusé")))
+        let secrets = InMemorySecretStore([R2Account.apiTokenSecretAccount(accountID: accountID): "x"])
+        let model = R2DashboardModel(accountID: accountID, provider: provider, secretStore: secrets)
+        await model.refresh()
+        #expect(model.state == .failed(RemoteError.authenticationFailed("jeton refusé").localizedDescription))
+    }
+
+    @Test func quotaLevels() {
+        #expect(QuotaLevel(ratio: 0.5) == .comfortable)
+        #expect(QuotaLevel(ratio: 0.8) == .nearLimit)
+        #expect(QuotaLevel(ratio: 1.0) == .exceeded)
+    }
+
+    @Test func dashboardOnlyForR2Endpoints() {
+        let app = AppEnvironment(dependencies: AppDependencies(
+            bookmarkRepository: InMemoryBookmarkRepository(),
+            pathBookmarkRepository: InMemoryPathBookmarkRepository(),
+            secretStore: InMemorySecretStore(),
+            fileSystemFactory: InMemoryFileSystemFactory(fileSystem: InMemoryFileSystem(configuration: .test)),
+            r2UsageProvider: StubR2UsageProvider(.success(usage))
+        ))
+        let r2 = ConnectionConfiguration(connectionProtocol: .s3, host: "\(accountID).r2.cloudflarestorage.com", username: "k", credential: .password("s"))
+        let aws = ConnectionConfiguration(connectionProtocol: .s3, host: "s3.amazonaws.com", username: "k", credential: .password("s"))
+        #expect(app.makeR2DashboardModel(for: r2)?.accountID == accountID)
+        #expect(app.makeR2DashboardModel(for: aws) == nil)
+    }
+}

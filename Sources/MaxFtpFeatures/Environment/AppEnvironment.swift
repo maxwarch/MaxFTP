@@ -29,6 +29,14 @@ public final class AppEnvironment {
         BrowserModel(factory: dependencies.fileSystemFactory, transfers: transfers, userPrompts: dependencies.userPrompts)
     }
 
+    /// Tableau de bord du compte R2 de cette connexion, si c'en est une (et si l'app sait lire les métriques).
+    public func makeR2DashboardModel(for configuration: ConnectionConfiguration?) -> R2DashboardModel? {
+        guard let configuration, configuration.connectionProtocol == .s3,
+              let accountID = R2Account.accountID(fromHost: configuration.host),
+              let provider = dependencies.r2UsageProvider else { return nil }
+        return R2DashboardModel(accountID: accountID, provider: provider, secretStore: dependencies.secretStore)
+    }
+
     public var quickConnectResolver: QuickConnectResolver {
         QuickConnectResolver(
             sshConfig: dependencies.sshConfig(),

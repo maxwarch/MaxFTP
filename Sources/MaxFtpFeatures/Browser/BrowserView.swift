@@ -163,7 +163,9 @@ struct BrowserContextMenu: View {
             Divider()
             if let single {
                 Button("Renommer…") { model.prompt = .rename(single) }
-                Button("Permissions (CHMOD)…") { model.prompt = .permissions(single) }
+                if model.configuration?.connectionProtocol.supportsPermissions ?? true {
+                    Button("Permissions (CHMOD)…") { model.prompt = .permissions(single) }
+                }
                 Button("Copier le chemin") { model.copyPathToPasteboard(single) }
                 signetToggle(single.path, isDirectory: single.canBeOpenedAsDirectory)
                 Divider()

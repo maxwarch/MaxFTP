@@ -7,6 +7,8 @@ public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable, Sen
     case ftp
     case ftpsExplicit
     case ftpsImplicit
+    /// Stockage objet compatible S3 (Cloudflare R2, AWS S3, MinIO…). Voir ADR 0008.
+    case s3
 
     public var id: String { rawValue }
 
@@ -16,6 +18,7 @@ public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable, Sen
         case .ftp: "FTP"
         case .ftpsExplicit: "FTPS (TLS explicite)"
         case .ftpsImplicit: "FTPS (TLS implicite)"
+        case .s3: "S3 / Cloudflare R2"
         }
     }
 
@@ -24,6 +27,7 @@ public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable, Sen
         case .sftp: 22
         case .ftp, .ftpsExplicit: 21
         case .ftpsImplicit: 990
+        case .s3: 443
         }
     }
 
@@ -34,6 +38,7 @@ public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable, Sen
         case .ftp: "ftp"
         case .ftpsExplicit: "ftpes"
         case .ftpsImplicit: "ftps"
+        case .s3: "s3"
         }
     }
 
@@ -47,7 +52,10 @@ public enum ConnectionProtocol: String, Codable, CaseIterable, Identifiable, Sen
 
     public var supportsKeyAuthentication: Bool { self == .sftp }
     public var usesTLS: Bool { self == .ftpsExplicit || self == .ftpsImplicit }
-    public var isFTPFamily: Bool { self != .sftp }
+    public var isFTPFamily: Bool { self == .ftp || usesTLS }
+    /// Stockage objet : buckets et clés, pas de vrais dossiers ni de permissions POSIX.
+    public var isObjectStorage: Bool { self == .s3 }
+    public var supportsPermissions: Bool { !isObjectStorage }
 }
 
 /// Mode d'ouverture du canal de données FTP.

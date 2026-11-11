@@ -2,6 +2,7 @@ import Foundation
 import MaxFtpCore
 import MaxFtpFeatures
 import MaxFtpFTP
+import MaxFtpS3
 import MaxFtpSFTP
 import MaxFtpStorage
 
@@ -31,7 +32,8 @@ enum AppComposition {
             defaultIdentityFiles: {
                 ["id_ed25519", "id_rsa"].map { AppDirectories.sshDirectory.appendingPathComponent($0) }
             },
-            userPrompts: userPrompts
+            userPrompts: userPrompts,
+            r2UsageProvider: CloudflareR2Analytics()
         )
         return AppEnvironment(dependencies: dependencies)
     }
@@ -50,6 +52,8 @@ struct ProtocolFileSystemFactory: RemoteFileSystemFactory {
             SFTPFileSystem(configuration: configuration, hostKeyTrust: hostKeyTrust)
         case .ftp, .ftpsExplicit, .ftpsImplicit:
             FTPFileSystem(configuration: configuration)
+        case .s3:
+            S3FileSystem(configuration: configuration)
         }
     }
 }

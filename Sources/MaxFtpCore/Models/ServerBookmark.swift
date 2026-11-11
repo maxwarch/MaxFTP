@@ -27,6 +27,8 @@ public struct ServerBookmark: Identifiable, Hashable, Sendable {
     public var initialPath: String?
     public var ftpDataMode: FTPDataConnectionMode
     public var allowsUntrustedCertificates: Bool
+    /// S3 uniquement : région de signature (`auto` pour Cloudflare R2).
+    public var s3Region: String
 
     public init(
         id: UUID = UUID(),
@@ -39,7 +41,8 @@ public struct ServerBookmark: Identifiable, Hashable, Sendable {
         privateKeyPath: String? = nil,
         initialPath: String? = nil,
         ftpDataMode: FTPDataConnectionMode = .passive,
-        allowsUntrustedCertificates: Bool = false
+        allowsUntrustedCertificates: Bool = false,
+        s3Region: String = ConnectionConfiguration.defaultS3Region
     ) {
         self.id = id
         self.name = name
@@ -52,6 +55,7 @@ public struct ServerBookmark: Identifiable, Hashable, Sendable {
         self.initialPath = initialPath
         self.ftpDataMode = ftpDataMode
         self.allowsUntrustedCertificates = allowsUntrustedCertificates
+        self.s3Region = s3Region
     }
 
     /// Nom affiché dans la barre latérale.
@@ -78,7 +82,8 @@ public struct ServerBookmark: Identifiable, Hashable, Sendable {
             credential: credential,
             initialPath: initialPath.flatMap { $0.isEmpty ? nil : RemotePath($0) },
             ftpDataMode: ftpDataMode,
-            allowsUntrustedCertificates: allowsUntrustedCertificates
+            allowsUntrustedCertificates: allowsUntrustedCertificates,
+            s3Region: s3Region
         )
     }
 }
@@ -91,7 +96,7 @@ public struct ServerBookmark: Identifiable, Hashable, Sendable {
 extension ServerBookmark: Codable {
     private enum CodingKeys: String, CodingKey {
         case id, name, connectionProtocol, host, port, username, authenticationKind
-        case privateKeyPath, initialPath, ftpDataMode, allowsUntrustedCertificates
+        case privateKeyPath, initialPath, ftpDataMode, allowsUntrustedCertificates, s3Region
     }
 
     public init(from decoder: any Decoder) throws {
@@ -108,7 +113,8 @@ extension ServerBookmark: Codable {
             privateKeyPath: try c.decodeIfPresent(String.self, forKey: .privateKeyPath),
             initialPath: try c.decodeIfPresent(String.self, forKey: .initialPath),
             ftpDataMode: try c.decodeIfPresent(FTPDataConnectionMode.self, forKey: .ftpDataMode) ?? .passive,
-            allowsUntrustedCertificates: try c.decodeIfPresent(Bool.self, forKey: .allowsUntrustedCertificates) ?? false
+            allowsUntrustedCertificates: try c.decodeIfPresent(Bool.self, forKey: .allowsUntrustedCertificates) ?? false,
+            s3Region: try c.decodeIfPresent(String.self, forKey: .s3Region) ?? ConnectionConfiguration.defaultS3Region
         )
     }
 
@@ -125,6 +131,7 @@ extension ServerBookmark: Codable {
         try c.encodeIfPresent(initialPath, forKey: .initialPath)
         try c.encode(ftpDataMode, forKey: .ftpDataMode)
         try c.encode(allowsUntrustedCertificates, forKey: .allowsUntrustedCertificates)
+        try c.encode(s3Region, forKey: .s3Region)
     }
 }
 
@@ -142,7 +149,8 @@ extension ServerBookmark {
             username: configuration.username,
             initialPath: configuration.initialPath?.string,
             ftpDataMode: configuration.ftpDataMode,
-            allowsUntrustedCertificates: configuration.allowsUntrustedCertificates
+            allowsUntrustedCertificates: configuration.allowsUntrustedCertificates,
+            s3Region: configuration.s3Region
         )
         switch configuration.credential {
         case .anonymous:

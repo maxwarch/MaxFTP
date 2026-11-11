@@ -251,6 +251,14 @@ private struct BookmarkRow: View {
         }
     }
 
+    private static func symbol(for connectionProtocol: ConnectionProtocol) -> String {
+        switch connectionProtocol {
+        case .sftp: "lock.shield"
+        case .s3: "cloud"
+        case .ftp, .ftpsExplicit, .ftpsImplicit: "server.rack"
+        }
+    }
+
     private var label: some View {
         Label {
             HStack(spacing: 6) {
@@ -274,7 +282,7 @@ private struct BookmarkRow: View {
                 }
             }
         } icon: {
-            Image(systemName: bookmark.connectionProtocol == .sftp ? "lock.shield" : "server.rack")
+            Image(systemName: Self.symbol(for: bookmark.connectionProtocol))
         }
     }
 }

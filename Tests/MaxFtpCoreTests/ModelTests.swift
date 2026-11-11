@@ -89,6 +89,14 @@ struct QuickConnectTargetTests {
         ))
     }
 
+    @Test func s3URLTargetsBucket() throws {
+        let target = try #require(QuickConnectTarget(parsing: "s3://AKID:SECRET@acc.r2.cloudflarestorage.com/photos"))
+        #expect(target.connectionProtocol == .s3)
+        #expect(target.username == "AKID")
+        #expect(target.password == "SECRET")
+        #expect(target.path == "/photos")
+    }
+
     @Test func shorthandDefaultsToSFTP() throws {
         let target = try #require(QuickConnectTarget(parsing: "alice@server.local"))
         #expect(target.connectionProtocol == .sftp)
@@ -113,6 +121,19 @@ struct ServerBookmarkTests {
         #expect(bookmark.ftpDataMode == .passive)
         #expect(bookmark.authenticationKind == .password)
         #expect(bookmark.displayName == "ftp.example.com")
+        #expect(bookmark.s3Region == "auto")
+    }
+
+    @Test func s3BookmarkKeepsRegionAndHidesAccessKey() throws {
+        let bookmark = ServerBookmark(connectionProtocol: .s3, host: "acc.r2.cloudflarestorage.com", username: "AKID", s3Region: "eu-west-3")
+        let decoded = try JSONDecoder().decode(ServerBookmark.self, from: JSONEncoder().encode(bookmark))
+        #expect(decoded.port == 443)
+        let configuration = decoded.configuration(secret: "secret")
+        #expect(configuration.s3Region == "eu-west-3")
+        #expect(configuration.credential == .password("secret"))
+        #expect(configuration.displayName == "acc.r2.cloudflarestorage.com")
+        #expect(ServerBookmark.from(configuration, name: "R2").bookmark.s3Region == "eu-west-3")
+        #expect(!ConnectionProtocol.s3.isFTPFamily && !ConnectionProtocol.s3.supportsPermissions)
     }
 
     @Test func configurationUsesSecret() {
