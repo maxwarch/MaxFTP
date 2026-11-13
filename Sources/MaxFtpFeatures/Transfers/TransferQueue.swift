@@ -190,8 +190,8 @@ public final class TransferQueue {
         case .upload(let url, let directory):
             return try TransferPlanner.uploadPlan(for: url, into: directory)
         case .replace(let path, let url):
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            return TransferPlan(steps: [.upload(url, to: path, size: Int64(size))])
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+            return TransferPlan(steps: [.upload(url, to: path, size: size)])
         case .download(let item, let directory):
             // Ne jamais écraser un fichier local existant : `photo 2.jpg` (comme le Finder).
             let destination = LocalFileIO.uniqueURL(for: directory.appendingPathComponent(item.name, isDirectory: item.isDirectory))

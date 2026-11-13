@@ -44,13 +44,14 @@ final class ExternalEditingService {
         sessions.removeAll()
     }
 
-    private func watch(_ url: URL, remotePath: RemotePath, configuration: ConnectionConfiguration, onUploaded: @escaping @MainActor () -> Void) {
+    func watch(_ url: URL, remotePath: RemotePath, configuration: ConnectionConfiguration, onUploaded: @escaping @MainActor () -> Void) {
         sessions[url]?.task.cancel()
         let interval = pollInterval
         let task = Task { [weak self] in
             var lastModified = Self.modificationDate(of: url)
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
+                guard !Task.isCancelled else { break }
                 let modified = Self.modificationDate(of: url)
                 guard let modified, modified != lastModified else { continue }
                 lastModified = modified
@@ -60,7 +61,9 @@ final class ExternalEditingService {
         sessions[url] = Session(task: task)
     }
 
+    /// Lit directement le système de fichiers : `URL.resourceValues` met en cache
+    /// la date de modification sur le `NSURL` sous-jacent et masquerait les sauvegardes.
     private static func modificationDate(of url: URL) -> Date? {
-        try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
     }
 }

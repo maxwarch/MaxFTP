@@ -57,6 +57,7 @@ public final class BrowserModel {
     private let editorChoices: () -> EditorChoices
     private let connectionTimeout: Duration
     private let userPrompts: UserPromptTracker
+    private let sudoPasswords: (any SudoPasswordProvider)?
     private var connectionGeneration = 0
 
     public init(
@@ -64,9 +65,11 @@ public final class BrowserModel {
         transfers: TransferQueue,
         editorChoices: @escaping () -> EditorChoices = { AppSettings.editorChoices },
         connectionTimeout: Duration = .seconds(30),
-        userPrompts: UserPromptTracker = UserPromptTracker()
+        userPrompts: UserPromptTracker = UserPromptTracker(),
+        sudoPasswords: (any SudoPasswordProvider)? = nil
     ) {
         self.userPrompts = userPrompts
+        self.sudoPasswords = sudoPasswords
         self.factory = factory
         self.transfers = transfers
         self.editing = ExternalEditingService(transfers: transfers)
@@ -190,6 +193,9 @@ public final class BrowserModel {
     public func disconnect() async {
         editing.stopAll()
         terminal = nil
+        if let serverKey = configuration?.serverKey {
+            await sudoPasswords?.clear(for: serverKey)
+        }
         let previous = fileSystem
         fileSystem = nil
         connectionState = .disconnected
@@ -460,6 +466,19 @@ public final class BrowserModel {
             try FileManager.default.moveItem(at: partial, to: url)
         }
         return url
+    }
+
+    /// Enregistre directement sur le serveur un texte modifié dans l'inspecteur.
+    public func saveText(_ text: String, to item: RemoteItem) async throws {
+        guard let fileSystem else { throw RemoteError.notConnected }
+        let localURL = LocalWorkspace.editingURL(for: item)
+        try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: localURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: localURL.deletingLastPathComponent()) }
+        try await fileSystem.upload(localURL, to: item.path) { _ in }
+        if currentPath == item.path.parent {
+            await refresh()
+        }
     }
 
     public func copyPathToPasteboard(_ item: RemoteItem) {

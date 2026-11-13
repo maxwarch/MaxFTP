@@ -10,6 +10,7 @@ import NIOCore
 public actor SFTPFileSystem: RemoteFileSystem {
     public nonisolated let configuration: ConnectionConfiguration
     private let hostKeyTrust: any HostKeyTrustPolicy
+    private let sudoPasswords: (any SudoPasswordProvider)?
 
     private var ssh: SSHClient?
     private var sftp: SFTPClient?
@@ -17,9 +18,14 @@ public actor SFTPFileSystem: RemoteFileSystem {
     /// Taille des requêtes de lecture (le serveur peut renvoyer moins).
     private let readChunkSize: UInt32 = 64 * 1024
 
-    public init(configuration: ConnectionConfiguration, hostKeyTrust: any HostKeyTrustPolicy) {
+    public init(
+        configuration: ConnectionConfiguration,
+        hostKeyTrust: any HostKeyTrustPolicy,
+        sudoPasswords: (any SudoPasswordProvider)? = nil
+    ) {
         self.configuration = configuration
         self.hostKeyTrust = hostKeyTrust
+        self.sudoPasswords = sudoPasswords
     }
 
     // MARK: Connexion
@@ -122,6 +128,15 @@ public actor SFTPFileSystem: RemoteFileSystem {
     }
 
     public func upload(_ localURL: URL, to path: RemotePath, progress: @escaping TransferProgressHandler) async throws {
+        do {
+            try await sftpUpload(localURL, to: path, progress: progress)
+        } catch where Self.isPermissionDenied(error) {
+            guard let sudoPasswords else { throw error }
+            try await uploadWithSudo(localURL, to: path, sudoPasswords: sudoPasswords, progress: progress)
+        }
+    }
+
+    private func sftpUpload(_ localURL: URL, to path: RemotePath, progress: @escaping TransferProgressHandler) async throws {
         let input = try LocalFileIO.openForReading(localURL)
         defer { try? input.close() }
         let file = try await client().openFile(filePath: path.string, flags: [.write, .create, .truncate])
@@ -139,6 +154,95 @@ public actor SFTPFileSystem: RemoteFileSystem {
             try? await file.close()
             throw error
         }
+    }
+
+    private func uploadWithSudo(
+        _ localURL: URL,
+        to path: RemotePath,
+        sudoPasswords: any SudoPasswordProvider,
+        progress: @escaping TransferProgressHandler
+    ) async throws {
+        guard #available(macOS 15, *) else {
+            throw RemoteError.unsupportedOperation("L'élévation sudo nécessite macOS 15.")
+        }
+        try await connect()
+        guard let ssh else { throw RemoteError.notConnected }
+
+        let tempPath = RemotePath("/tmp/.maxftp-sudo-\(UUID().uuidString)")
+        try await sftpUpload(localURL, to: tempPath, progress: progress)
+
+        let command = "sudo -S -p '' sh -c 'cat \"$1\" > \"$2\" && echo __MAXFTP_OK__' _ \(ShellCommand.quote(tempPath.string)) \(ShellCommand.quote(path.string))"
+
+        do {
+            var previousFailed = false
+            for attempt in 0..<3 {
+                guard let password = await sudoPasswords.password(
+                    for: configuration.serverKey,
+                    path: path,
+                    previousAttemptFailed: previousFailed
+                ) else {
+                    throw RemoteError.authenticationFailed("Authentification sudo annulée.")
+                }
+
+                var stdoutText = ""
+                var stderrText = ""
+                var commandFailed = false
+                do {
+                    try await ssh.withExec(command) { inbound, outbound in
+                        try await outbound.write(ByteBuffer(string: password + "\n"))
+                        for try await chunk in inbound {
+                            switch chunk {
+                            case .stdout(let buffer):
+                                stdoutText += String(buffer: buffer)
+                            case .stderr(let buffer):
+                                stderrText += String(buffer: buffer)
+                            }
+                        }
+                    }
+                } catch is SSHClient.CommandFailed {
+                    commandFailed = true
+                } catch let error as ChannelError where error == .alreadyClosed {
+                    // Le serveur a déjà fermé le canal à la fin de la commande.
+                }
+
+                if stdoutText.contains("__MAXFTP_OK__") && !commandFailed {
+                    try? await sftp?.remove(at: tempPath.string)
+                    return
+                }
+
+                let cleanedStderr = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let looksLikeWrongPassword = Self.isWrongSudoPassword(cleanedStderr) || (cleanedStderr.isEmpty && attempt < 2)
+                if looksLikeWrongPassword && attempt < 2 {
+                    previousFailed = true
+                    continue
+                }
+                await sudoPasswords.clear(for: configuration.serverKey)
+                throw RemoteError.serverError(
+                    code: 403,
+                    message: cleanedStderr.isEmpty ? "Échec de l'enregistrement avec sudo." : cleanedStderr
+                )
+            }
+            await sudoPasswords.clear(for: configuration.serverKey)
+            throw RemoteError.authenticationFailed("Mot de passe sudo incorrect.")
+        } catch {
+            try? await sftp?.remove(at: tempPath.string)
+            throw error
+        }
+    }
+
+    private static func isPermissionDenied(_ error: any Error) -> Bool {
+        if case SFTPError.errorStatus(let status) = error {
+            return status.errorCode == .permissionDenied
+        }
+        if let status = error as? SFTPMessage.Status {
+            return status.errorCode == .permissionDenied
+        }
+        return false
+    }
+
+    private static func isWrongSudoPassword(_ stderr: String) -> Bool {
+        let lower = stderr.lowercased()
+        return lower.contains("try again") || lower.contains("incorrect password") || lower.contains("mot de passe")
     }
 
     // MARK: Conversion des attributs SFTP → domaine

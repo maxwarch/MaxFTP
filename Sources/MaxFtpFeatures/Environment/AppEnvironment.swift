@@ -26,7 +26,12 @@ public final class AppEnvironment {
 
     /// Fabrique le modèle d'une nouvelle fenêtre.
     public func makeBrowserModel() -> BrowserModel {
-        BrowserModel(factory: dependencies.fileSystemFactory, transfers: transfers, userPrompts: dependencies.userPrompts)
+        BrowserModel(
+            factory: dependencies.fileSystemFactory,
+            transfers: transfers,
+            userPrompts: dependencies.userPrompts,
+            sudoPasswords: dependencies.sudoPasswords
+        )
     }
 
     /// Tableau de bord du compte R2 de cette connexion, si c'en est une (et si l'app sait lire les métriques).

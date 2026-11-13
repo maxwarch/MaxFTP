@@ -710,3 +710,111 @@ struct R2DashboardModelTests {
         #expect(app.makeR2DashboardModel(for: aws) == nil)
     }
 }
+
+@MainActor
+@Suite("Édition externe")
+struct ExternalEditingTests {
+    @Test func savingLocalFileUploadsReplacementToServer() async throws {
+        let fs = InMemoryFileSystem(files: ["/notes.txt": "initial"])
+        let factory = InMemoryFileSystemFactory(fileSystem: fs)
+        let transfers = TransferQueue(factory: factory, maxConcurrent: { 1 })
+        let service = ExternalEditingService(transfers: transfers, pollInterval: .milliseconds(20))
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MaxFtpTest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let localURL = directory.appendingPathComponent("notes.txt")
+        try Data("initial".utf8).write(to: localURL)
+
+        var uploaded = false
+        service.watch(localURL, remotePath: RemotePath("/notes.txt"), configuration: ConnectionConfiguration.test) {
+            uploaded = true
+        }
+        defer { service.stopAll() }
+
+        // Modifier la date + le contenu (comme lors d'une sauvegarde dans un éditeur).
+        try await Task.sleep(for: .milliseconds(40))
+        try Data("modifié".utf8).write(to: localURL, options: .atomic)
+        let future = Date().addingTimeInterval(2)
+        try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: localURL.path)
+
+        for _ in 0..<40 where !uploaded {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        #expect(uploaded)
+        let remoteContent = await fs.contents(of: RemotePath("/notes.txt"))
+        #expect(remoteContent == "modifié")
+    }
+}
+
+@MainActor
+@Suite("Édition dans l'inspecteur")
+struct InlineEditingTests {
+    @Test func previewModelEditsAndSavesTextFileToServer() async throws {
+        let fs = InMemoryFileSystem(files: ["/readme.txt": "bonjour"])
+        let factory = InMemoryFileSystemFactory(fileSystem: fs)
+        let transfers = TransferQueue(factory: factory, maxConcurrent: { 1 })
+        let browser = BrowserModel(factory: factory, transfers: transfers)
+        await browser.connect(to: ConnectionConfiguration.test)
+        await browser.navigate(to: .root)
+
+        let item = try #require(browser.items.first { $0.path == RemotePath("/readme.txt") })
+        let preview = PreviewModel()
+        await preview.load(item, using: browser)
+
+        #expect(preview.canEdit)
+        #expect(!preview.isEditing)
+
+        preview.beginEditing()
+        #expect(preview.isEditing)
+        #expect(!preview.hasUnsavedChanges)
+
+        preview.draftText = "bonjour modifié"
+        #expect(preview.hasUnsavedChanges)
+
+        await preview.save(item: item, using: browser)
+        #expect(!preview.isEditing)
+        #expect(preview.saveError == nil)
+        #expect(await fs.contents(of: RemotePath("/readme.txt")) == "bonjour modifié")
+        if case .text(let shown) = preview.content {
+            #expect(shown == "bonjour modifié")
+        } else {
+            Issue.record("attendu : aperçu texte mis à jour")
+        }
+    }
+}
+
+@Suite("Mot de passe sudo")
+struct SudoPasswordProviderTests {
+    @Test func cachesPasswordForSessionAndClearsOnRetryOrDisconnect() async {
+        actor Counter {
+            var calls = 0
+            func next() -> Int { calls += 1; return calls }
+        }
+        let counter = Counter()
+        let provider = InteractiveSudoPasswordProvider { _, _, failed in
+            let n = await counter.next()
+            return failed ? "nouveau-\(n)" : "secret-\(n)"
+        }
+
+        let path = RemotePath("/etc/nginx/nginx.conf")
+        let first = await provider.password(for: "srv1", path: path, previousAttemptFailed: false)
+        let second = await provider.password(for: "srv1", path: path, previousAttemptFailed: false)
+        #expect(first == "secret-1")
+        #expect(second == "secret-1")
+        #expect(await counter.calls == 1)
+
+        // Si la tentative précédente a échoué, on redemande le mot de passe.
+        let retried = await provider.password(for: "srv1", path: path, previousAttemptFailed: true)
+        #expect(retried == "nouveau-2")
+        #expect(await counter.calls == 2)
+
+        // À la déconnexion, le cache est effacé.
+        await provider.clear(for: "srv1")
+        let afterDisconnect = await provider.password(for: "srv1", path: path, previousAttemptFailed: false)
+        #expect(afterDisconnect == "secret-3")
+        #expect(await counter.calls == 3)
+    }
+}

@@ -15,7 +15,7 @@ struct InspectorView: View {
                     MetadataSection(item: item)
                         .padding()
                     Divider()
-                    PreviewSection(content: preview.content, browser: browser)
+                    PreviewSection(item: item, preview: preview, browser: browser)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .id(item.id)  // nouvel élément : on repart d'un aperçu vierge
                 }
@@ -79,11 +79,94 @@ private struct MetadataSection: View {
 }
 
 private struct PreviewSection: View {
-    let content: PreviewModel.Content
+    let item: RemoteItem
+    @Bindable var preview: PreviewModel
     let browser: BrowserModel
 
     var body: some View {
-        switch content {
+        if preview.isEditing {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    if preview.isSaving {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Enregistrement…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if preview.hasUnsavedChanges {
+                        Text("Modifié")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Annuler") {
+                        preview.cancelEditing()
+                    }
+                    .controlSize(.small)
+                    .disabled(preview.isSaving)
+
+                    Button("Enregistrer") {
+                        Task { await preview.save(item: item, using: browser) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(!preview.hasUnsavedChanges || preview.isSaving)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+
+                if let error = preview.saveError {
+                    Divider()
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                }
+
+                Divider()
+
+                PlainTextEditor(text: $preview.draftText, isEditable: !preview.isSaving)
+            }
+        } else {
+            VStack(spacing: 0) {
+                if preview.canEdit {
+                    HStack {
+                        Spacer()
+                        Button {
+                            preview.beginEditing()
+                        } label: {
+                            Label("Modifier", systemImage: "pencil")
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.bordered)
+                        .help("Modifier le fichier directement dans l'inspecteur")
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    Divider()
+                } else if preview.isTruncated {
+                    Text("Aperçu tronqué — utilisez « Éditer » dans le menu contextuel pour modifier ce fichier.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                    Divider()
+                }
+
+                previewContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        switch preview.content {
         case .none:
             Color.clear
         case .directory(let items):
@@ -229,7 +312,7 @@ private struct FolderPreview: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                PreviewSection(content: filePreview.content, browser: browser)
+                PreviewSection(item: file, preview: filePreview, browser: browser)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -357,6 +440,77 @@ private struct EntryRow: View {
     private var background: Color {
         if isSelected { return .accentColor }
         return isHovered ? Color.primary.opacity(0.06) : .clear
+    }
+}
+
+/// Éditeur texte brut (`NSTextView`) sans guillemets typographiques, tirets automatiques ni correction.
+private struct PlainTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    var isEditable: Bool = true
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+
+        let textView = NSTextView()
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsUndo = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.isAutomaticLinkDetectionEnabled = false
+        textView.isAutomaticDataDetectionEnabled = false
+        textView.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        textView.textColor = .textColor
+        textView.backgroundColor = .textBackgroundColor
+        textView.textContainerInset = NSSize(width: 6, height: 8)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.string = text
+        textView.isEditable = isEditable
+
+        scrollView.documentView = textView
+        DispatchQueue.main.async {
+            textView.window?.makeFirstResponder(textView)
+        }
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        textView.isEditable = isEditable
+        if textView.string != text {
+            let selectedRanges = textView.selectedRanges
+            textView.string = text
+            textView.selectedRanges = selectedRanges
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: PlainTextEditor
+
+        init(_ parent: PlainTextEditor) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+        }
     }
 }
 

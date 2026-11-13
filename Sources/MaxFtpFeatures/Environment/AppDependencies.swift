@@ -21,6 +21,8 @@ public struct AppDependencies: Sendable {
     public var r2UsageProvider: (any R2UsageProvider)?
     /// Terminal intégré ; `nil` = indisponible (tests).
     public var terminalPanel: TerminalPanelBuilder?
+    /// Fournisseur de mot de passe `sudo` pour la session ; `nil` en tests.
+    public var sudoPasswords: (any SudoPasswordProvider)?
 
     public init(
         bookmarkRepository: any BookmarkRepository,
@@ -31,9 +33,11 @@ public struct AppDependencies: Sendable {
         defaultIdentityFiles: @escaping @Sendable () -> [URL] = { [] },
         userPrompts: UserPromptTracker = UserPromptTracker(),
         r2UsageProvider: (any R2UsageProvider)? = nil,
-        terminalPanel: TerminalPanelBuilder? = nil
+        terminalPanel: TerminalPanelBuilder? = nil,
+        sudoPasswords: (any SudoPasswordProvider)? = nil
     ) {
         self.terminalPanel = terminalPanel
+        self.sudoPasswords = sudoPasswords
         self.userPrompts = userPrompts
         self.r2UsageProvider = r2UsageProvider
         self.bookmarkRepository = bookmarkRepository
