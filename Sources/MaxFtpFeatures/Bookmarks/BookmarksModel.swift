@@ -70,6 +70,13 @@ public final class BookmarksModel {
         save(copy, secret: secret(for: bookmark))
     }
 
+    public func rename(_ bookmark: ServerBookmark, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = bookmarks.firstIndex(where: { $0.id == bookmark.id }) else { return }
+        bookmarks[index].name = trimmed
+        perform { try repository.saveBookmarks(bookmarks) }
+    }
+
     public func move(fromOffsets source: IndexSet, toOffset destination: Int) {
         bookmarks.move(fromOffsets: source, toOffset: destination)
         perform { try repository.saveBookmarks(bookmarks) }

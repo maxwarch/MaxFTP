@@ -57,6 +57,14 @@ public final class PathBookmarksModel {
         persist()
     }
 
+    public func rename(_ bookmark: PathBookmark, on serverKey: String, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = bookmarksByServer[serverKey]?.firstIndex(where: { $0.id == bookmark.id }) else { return }
+        bookmarksByServer[serverKey]?[index].name = trimmed
+        persist()
+    }
+
     private func persist() {
         do {
             try repository.savePathBookmarks(bookmarksByServer)

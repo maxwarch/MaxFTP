@@ -329,6 +329,18 @@ struct PathBookmarksModelTests {
         let model = PathBookmarksModel(repository: repository)
         #expect(model.bookmark(for: "/etc/hosts", on: key)?.isDirectory == false)
     }
+
+    @Test func renamePersistsAcrossReloads() {
+        let signet = PathBookmark(name: "www", path: "/var/www", isDirectory: true)
+        let repository = InMemoryPathBookmarkRepository([key: [signet]])
+        let model = PathBookmarksModel(repository: repository)
+
+        model.rename(signet, on: key, to: "  Site prod  ")
+        #expect(model.bookmarks(for: key).first?.name == "Site prod")
+
+        let reloaded = PathBookmarksModel(repository: repository)
+        #expect(reloaded.bookmarks(for: key).first?.name == "Site prod")
+    }
 }
 
 @Suite("Navigation à la souris")
@@ -633,6 +645,19 @@ struct BookmarksModelTests {
         #expect(try secrets.secret(for: bookmark.secretAccount) == "secret")
         #expect(model.bookmark(forServerKey: ConnectionConfiguration.test.serverKey) == bookmark)
         #expect(model.configuration(for: bookmark) == .test)
+    }
+
+    @Test func renamePersistsAcrossReloads() {
+        let repository = InMemoryBookmarkRepository()
+        let secrets = InMemorySecretStore()
+        let model = BookmarksModel(repository: repository, secretStore: secrets)
+        let bookmark = model.addFavorite(from: .test, name: "Ancien nom")
+
+        model.rename(bookmark, to: "  Nouveau nom  ")
+        #expect(model.bookmarks.first?.name == "Nouveau nom")
+
+        let reloaded = BookmarksModel(repository: repository, secretStore: secrets)
+        #expect(reloaded.bookmarks.first?.name == "Nouveau nom")
     }
 }
 
