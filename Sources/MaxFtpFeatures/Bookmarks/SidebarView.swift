@@ -6,15 +6,18 @@ import SwiftUI
 /// (en se connectant au serveur si besoin).
 struct SidebarView: View {
     let bookmarks: BookmarksModel
-    let browser: BrowserModel
+    let tabs: BrowserTabsModel
     let signets: PathBookmarksModel
     let onConnect: (ServerBookmark) -> Void
+
+    private var browser: BrowserModel { tabs.activeBrowser }
 
     /// Id d'un favori ou d'un signet (tous deux des UUID).
     @State private var selection: UUID?
     @State private var expanded: Set<ServerBookmark.ID> = []
     @State private var editorDraft: BookmarkDraft?
     @State private var isNamingSession = false
+    @State private var renameTarget: RenameTarget?
 
     /// Session en cours sans favori correspondant (connexion rapide).
     private var unsavedSession: ConnectionConfiguration? {
@@ -60,17 +63,19 @@ struct SidebarView: View {
         .contextMenu(forSelectionType: UUID.self) { ids in
             if let (signet, serverKey) = signet(ids.first) {
                 Button("Ouvrir") { open(signet, serverKey: serverKey) }
+                Button("Renommer…") { renameTarget = .signet(signet, serverKey: serverKey) }
                 Divider()
                 Button("Retirer des signets", role: .destructive) { signets.remove(signet, on: serverKey) }
             } else if let bookmark = bookmark(ids.first) {
-                if browser.isSession(on: bookmark.serverKey) {
+                if let tab = tabs.tab(forServerKey: bookmark.serverKey) {
                     Button("Aller au dossier de départ") { onConnect(bookmark) }
-                    Button("Se déconnecter") { Task { await browser.disconnect() } }
+                    Button("Se déconnecter") { Task { await tab.browser.disconnect() } }
                 } else {
                     Button("Se connecter") { onConnect(bookmark) }
                 }
                 Divider()
                 Button("Modifier…") { edit(bookmark) }
+                Button("Renommer…") { renameTarget = .bookmark(bookmark) }
                 Button("Dupliquer") { bookmarks.duplicate(bookmark) }
                 Divider()
                 Button("Supprimer", role: .destructive) { bookmarks.delete(bookmark) }
@@ -125,6 +130,24 @@ struct SidebarView: View {
                 bookmarks.save(bookmark, secret: secret)
             }
         }
+        .sheet(item: $renameTarget) { target in
+            NameInputSheet(title: "Renommer", initialName: target.initialName, actionTitle: "Renommer") { newName in
+                let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                switch target {
+                case .bookmark(let bookmark):
+                    bookmarks.rename(bookmark, to: trimmed)
+                    for tab in tabs.tabs where tab.browser.isSession(on: bookmark.serverKey) {
+                        tab.bookmarkName = trimmed
+                    }
+                case .signet(let signet, let serverKey):
+                    signets.rename(signet, on: serverKey, to: trimmed)
+                    for tab in tabs.tabs where tab.signetID == signet.id && tab.browser.isSession(on: serverKey) {
+                        tab.signetName = trimmed
+                    }
+                }
+            }
+        }
         .overlay {
             if bookmarks.bookmarks.isEmpty && browser.serverKey == nil {
                 ContentUnavailableView {
@@ -144,8 +167,8 @@ struct SidebarView: View {
     }
 
     private func status(of bookmark: ServerBookmark) -> BookmarkRow.Status? {
-        guard browser.isSession(on: bookmark.serverKey) else { return nil }
-        return browser.isConnected ? .connected : .connecting
+        guard let tab = tabs.tab(forServerKey: bookmark.serverKey) else { return nil }
+        return tab.browser.isConnected ? .connected : .connecting
     }
 
     private func expansion(of bookmark: ServerBookmark) -> Binding<Bool> {
@@ -170,18 +193,37 @@ struct SidebarView: View {
         return nil
     }
 
-    /// Même serveur : on s'y rend. Sinon on se connecte via le favori correspondant.
+    /// Ouvre le signet dans un onglet dédié (ou bascule dessus s'il est déjà ouvert).
     private func open(_ signet: PathBookmark, serverKey: String) {
-        if browser.serverKey == serverKey {
-            Task { await browser.reveal(signet) }
-        } else if let bookmark = bookmarks.bookmarks.first(where: { $0.serverKey == serverKey }) {
+        if let bookmark = bookmarks.bookmarks.first(where: { $0.serverKey == serverKey }) {
             let configuration = bookmarks.configuration(for: bookmark)
-            Task { await browser.open(signet, on: configuration) }
+            Task { await tabs.openSignet(signet, on: configuration, bookmarkName: bookmark.name) }
+        } else if let sessionConfig = tabs.tab(forServerKey: serverKey)?.browser.configuration {
+            Task { await tabs.openSignet(signet, on: sessionConfig) }
         }
     }
 
     private func edit(_ bookmark: ServerBookmark) {
         editorDraft = BookmarkDraft(bookmark: bookmark, secret: bookmarks.secret(for: bookmark) ?? "")
+    }
+}
+
+private enum RenameTarget: Identifiable {
+    case bookmark(ServerBookmark)
+    case signet(PathBookmark, serverKey: String)
+
+    var id: UUID {
+        switch self {
+        case .bookmark(let bookmark): bookmark.id
+        case .signet(let signet, _): signet.id
+        }
+    }
+
+    var initialName: String {
+        switch self {
+        case .bookmark(let bookmark): bookmark.displayName
+        case .signet(let signet, _): signet.name
+        }
     }
 }
 

@@ -6,6 +6,10 @@ private struct BrowserModelKey: FocusedValueKey {
     typealias Value = BrowserModel
 }
 
+private struct BrowserTabsKey: FocusedValueKey {
+    typealias Value = BrowserTabsModel
+}
+
 private struct PathBookmarksKey: FocusedValueKey {
     typealias Value = PathBookmarksModel
 }
@@ -19,6 +23,11 @@ extension FocusedValues {
     var browserModel: BrowserModel? {
         get { self[BrowserModelKey.self] }
         set { self[BrowserModelKey.self] = newValue }
+    }
+
+    var browserTabs: BrowserTabsModel? {
+        get { self[BrowserTabsKey.self] }
+        set { self[BrowserTabsKey.self] = newValue }
     }
 
     var pathBookmarks: PathBookmarksModel? {
@@ -35,6 +44,7 @@ extension FocusedValues {
 /// Menu « Serveur » et raccourcis clavier, appliqués à la fenêtre active.
 public struct BrowserCommands: Commands {
     @FocusedValue(\.browserModel) private var browser
+    @FocusedValue(\.browserTabs) private var tabs
     @FocusedValue(\.pathBookmarks) private var pathBookmarks
     @FocusedValue(\.inspectorVisibility) private var inspectorVisibility
 
@@ -79,6 +89,20 @@ public struct BrowserCommands: Commands {
             Button("Supprimer…") { browser?.requestDeletion() }
                 .keyboardShortcut(.delete)
                 .disabled(browser?.selection.isEmpty != false)
+
+            Divider()
+
+            Button("Nouvel onglet") { tabs?.newTab() }
+                .keyboardShortcut("t")
+                .disabled(tabs == nil)
+
+            Button("Onglet précédent") { tabs?.selectPreviousTab() }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .disabled((tabs?.tabs.count ?? 0) <= 1)
+
+            Button("Onglet suivant") { tabs?.selectNextTab() }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .disabled((tabs?.tabs.count ?? 0) <= 1)
 
             Divider()
 

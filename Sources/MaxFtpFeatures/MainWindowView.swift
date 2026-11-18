@@ -2,46 +2,53 @@ import MaxFtpCore
 import AppKit
 import SwiftUI
 
-/// Une fenêtre = une session : favoris | explorateur | inspecteur.
+/// Une fenêtre = une session (avec onglets) : favoris | explorateur | inspecteur.
 public struct MainWindowView: View {
     private let app: AppEnvironment
-    @State private var browser: BrowserModel
+    @State private var tabs: BrowserTabsModel
     @State private var showInspector = true
     @State private var showQuickConnect = false
     @State private var newBookmark: BookmarkDraft?
     @State private var r2Dashboard: R2DashboardModel?
     @AppStorage(AppSettings.autoRefreshSecondsKey) private var autoRefreshSeconds = AppSettings.defaultAutoRefreshSeconds
 
+    private var browser: BrowserModel { tabs.activeBrowser }
+
     public init(app: AppEnvironment) {
         self.app = app
-        _browser = State(initialValue: app.makeBrowserModel())
+        _tabs = State(initialValue: BrowserTabsModel(makeBrowser: { app.makeBrowserModel() }))
     }
 
     public var body: some View {
         NavigationSplitView {
-            SidebarView(bookmarks: app.bookmarks, browser: browser, signets: app.pathBookmarks) { bookmark in
+            SidebarView(bookmarks: app.bookmarks, tabs: tabs, signets: app.pathBookmarks) { bookmark in
                 let configuration = app.bookmarks.configuration(for: bookmark)
-                Task { await browser.connectOrReuse(configuration) }
+                Task { await tabs.openBookmark(bookmark, configuration: configuration) }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
         } detail: {
-            // Le partage vertical n'existe que terminal ouvert : sans lui, un `VSplitView`
-            // à un seul enfant ne donne pas toute la hauteur à l'explorateur.
-            if let request = browser.terminal, let builder = app.dependencies.terminalPanel,
-               let configuration = browser.configuration {
-                VSplitView {
+            VStack(spacing: 0) {
+                BrowserTabBar(tabs: tabs)
+                Divider()
+                // Le partage vertical n'existe que terminal ouvert : sans lui, un `VSplitView`
+                // à un seul enfant ne donne pas toute la hauteur à l'explorateur.
+                if let request = browser.terminal, let builder = app.dependencies.terminalPanel,
+                   let configuration = browser.configuration {
+                    VSplitView {
+                        browserView
+                            .frame(minHeight: 200, maxHeight: .infinity)
+                        TerminalContainer(browser: browser, request: request, configuration: configuration, builder: builder)
+                            .id(request.id)
+                            .frame(minHeight: 120, idealHeight: 260, maxHeight: .infinity)
+                    }
+                } else {
                     browserView
-                        .frame(minHeight: 200, maxHeight: .infinity)
-                    TerminalContainer(browser: browser, request: request, configuration: configuration, builder: builder)
-                        .id(request.id)
-                        .frame(minHeight: 120, idealHeight: 260, maxHeight: .infinity)
                 }
-            } else {
-                browserView
             }
         }
         .inspector(isPresented: $showInspector) {
             InspectorView(browser: browser)
+                .id(tabs.selectedTabID)
                 .inspectorColumnWidth(min: 240, ideal: 300, max: 480)
         }
         .navigationTitle(browser.title)
@@ -154,6 +161,7 @@ public struct MainWindowView: View {
             }
         }
         .focusedSceneValue(\.browserModel, browser)
+        .focusedSceneValue(\.browserTabs, tabs)
         .focusedSceneValue(\.pathBookmarks, app.pathBookmarks)
         .onMouseNavigation { direction in
             Task {
@@ -187,7 +195,7 @@ public struct MainWindowView: View {
             Text(app.pathBookmarks.errorMessage ?? "")
         }
         .onDisappear {
-            Task { await browser.disconnect() }
+            Task { await tabs.disconnectAll() }
         }
         .task(id: autoRefreshKey) { await autoRefresh() }
         .frame(minWidth: 900, minHeight: 500)
@@ -215,11 +223,12 @@ public struct MainWindowView: View {
             onQuickConnect: { showQuickConnect = true },
             onNewBookmark: { newBookmark = BookmarkDraft(bookmark: ServerBookmark(), secret: "") }
         )
+        .id(tabs.selectedTabID)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func connect(to configuration: ConnectionConfiguration) {
-        Task { await browser.connect(to: configuration) }
+        Task { await tabs.connectActiveTab(to: configuration) }
     }
 }
 
