@@ -37,7 +37,7 @@ public actor InteractiveSudoPasswordProvider: SudoPasswordProvider {
     }
 }
 
-/// Alerte AppKit demandant le mot de passe `sudo` pour enregistrer un fichier protégé.
+/// Alerte AppKit demandant le mot de passe `sudo` pour une opération sur un élément protégé.
 public enum SudoPasswordAlert {
     @MainActor
     public static func present(path: RemotePath, previousAttemptFailed: Bool) -> String? {
@@ -45,15 +45,15 @@ public enum SudoPasswordAlert {
         alert.alertStyle = previousAttemptFailed ? .warning : .informational
         alert.messageText = "Authentification sudo requise"
         alert.informativeText = previousAttemptFailed
-            ? "Le mot de passe sudo est incorrect. Réessayez pour enregistrer « \(path.name) » :"
-            : "L'enregistrement de « \(path.name) » nécessite les droits administrateur. Le mot de passe sera conservé pendant toute la session."
+            ? "Le mot de passe sudo est incorrect. Réessayez pour « \(path.name) » :"
+            : "L'opération sur « \(path.name) » nécessite les droits administrateur. Le mot de passe sera conservé pendant toute la session."
 
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         field.placeholderString = "Mot de passe sudo"
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
 
-        alert.addButton(withTitle: "Enregistrer")
+        alert.addButton(withTitle: "Continuer")
         alert.addButton(withTitle: "Annuler")
 
         NSApp.activate(ignoringOtherApps: true)

@@ -14,6 +14,8 @@ public actor SFTPFileSystem: RemoteFileSystem {
 
     private var ssh: SSHClient?
     private var sftp: SFTPClient?
+    /// Chemins identifiés comme liens symboliques lors du listing (même s'ils pointent vers un dossier).
+    private var knownSymbolicLinks: Set<RemotePath> = []
 
     /// Taille des requêtes de lecture (le serveur peut renvoyer moins).
     private let readChunkSize: UInt32 = 64 * 1024
@@ -56,74 +58,141 @@ public actor SFTPFileSystem: RemoteFileSystem {
         return sftp
     }
 
+    /// Exécute une opération SFTP en se reconnectant une fois si le canal a été fermé entre-temps.
+    private func withSFTP<T: Sendable>(_ operation: (SFTPClient) async throws -> T) async throws -> T {
+        do {
+            return try await operation(try await client())
+        } catch is ChannelError {
+            await disconnect()
+            do {
+                return try await operation(try await client())
+            } catch is ChannelError {
+                throw RemoteError.connectionClosed
+            }
+        }
+    }
+
     // MARK: Navigation
 
     public func homeDirectory() async throws -> RemotePath {
-        RemotePath(try await client().getRealPath(atPath: "."))
+        try await withSFTP { sftp in
+            RemotePath(try await sftp.getRealPath(atPath: "."))
+        }
     }
 
     public func contentsOfDirectory(at path: RemotePath) async throws -> [RemoteItem] {
-        let sftp = try await client()
-        let names = try await sftp.listDirectory(atPath: path.string)
-        var items: [RemoteItem] = []
-        for component in names.flatMap(\.components) where component.filename != "." && component.filename != ".." {
-            var item = Self.makeItem(component.attributes, path: path.appending(component.filename))
-            // `readdir` renvoie les attributs du lien lui-même : on suit le lien pour savoir s'il mène à un dossier.
-            if item.kind == .symbolicLink,
-               let target = try? await sftp.getAttributes(at: item.path.string),
-               Self.kind(of: target) == .directory {
-                item.kind = .directory
+        try await withSFTP { sftp in
+            let names = try await sftp.listDirectory(atPath: path.string)
+            var items: [RemoteItem] = []
+            for component in names.flatMap(\.components) where component.filename != "." && component.filename != ".." {
+                var item = Self.makeItem(component.attributes, path: path.appending(component.filename))
+                // `readdir` renvoie les attributs du lien lui-même : on suit le lien pour savoir s'il mène à un dossier.
+                if item.kind == .symbolicLink {
+                    knownSymbolicLinks.insert(item.path)
+                    if let target = try? await sftp.getAttributes(at: item.path.string),
+                       Self.kind(of: target) == .directory {
+                        item.kind = .directory
+                    }
+                } else {
+                    knownSymbolicLinks.remove(item.path)
+                }
+                items.append(item)
             }
-            items.append(item)
+            return items
         }
-        return items
     }
 
     // MARK: Opérations sur fichiers
 
     public func createDirectory(at path: RemotePath) async throws {
-        try await client().createDirectory(atPath: path.string)
+        try await withSFTP { try await $0.createDirectory(atPath: path.string) }
     }
 
     public func removeFile(at path: RemotePath) async throws {
-        try await client().remove(at: path.string)
+        do {
+            try await withSFTP { try await $0.remove(at: path.string) }
+        } catch where Self.isPermissionDenied(error) {
+            guard let sudoPasswords else { throw error }
+            try await runWithSudo(
+                command: Self.sudoRemoveFileCommand(at: path),
+                path: path,
+                sudoPasswords: sudoPasswords,
+                failureMessage: "Échec de la suppression avec sudo."
+            )
+        }
     }
 
     public func removeDirectory(at path: RemotePath) async throws {
-        try await client().rmdir(at: path.string)
+        do {
+            try await withSFTP { try await $0.rmdir(at: path.string) }
+        } catch where Self.isPermissionDenied(error) {
+            guard let sudoPasswords else { throw error }
+            try await runWithSudo(
+                command: Self.sudoRemoveDirectoryCommand(at: path),
+                path: path,
+                sudoPasswords: sudoPasswords,
+                failureMessage: "Échec de la suppression du dossier avec sudo."
+            )
+        }
+    }
+
+    public func removeItem(_ item: RemoteItem) async throws {
+        guard item.isDirectory,
+              item.symbolicLinkTarget == nil,
+              !knownSymbolicLinks.contains(item.path) else {
+            try await removeFile(at: item.path)
+            return
+        }
+        do {
+            for child in try await contentsOfDirectory(at: item.path) {
+                try Task.checkCancellation()
+                try await removeItem(child)
+            }
+            try await removeDirectory(at: item.path)
+        } catch where Self.isPermissionDenied(error) {
+            guard let sudoPasswords else { throw error }
+            try await runWithSudo(
+                command: Self.sudoRemoveTreeCommand(at: item.path),
+                path: item.path,
+                sudoPasswords: sudoPasswords,
+                failureMessage: "Échec de la suppression du dossier avec sudo."
+            )
+        }
     }
 
     public func moveItem(at source: RemotePath, to destination: RemotePath) async throws {
-        try await client().rename(at: source.string, to: destination.string)
+        try await withSFTP { try await $0.rename(at: source.string, to: destination.string) }
     }
 
     public func setPermissions(_ permissions: POSIXPermissions, at path: RemotePath) async throws {
         var attributes = SFTPFileAttributes()
         attributes.permissions = UInt32(permissions.rawValue)
-        try await client().setAttributes(at: path.string, to: attributes)
+        try await withSFTP { try await $0.setAttributes(at: path.string, to: attributes) }
     }
 
     // MARK: Transferts
 
     public func download(_ path: RemotePath, to localURL: URL, progress: @escaping TransferProgressHandler) async throws {
-        let file = try await client().openFile(filePath: path.string, flags: .read)
-        let output = try LocalFileIO.createFileForWriting(at: localURL)
-        defer { try? output.close() }
+        try await withSFTP { sftp in
+            let file = try await sftp.openFile(filePath: path.string, flags: .read)
+            let output = try LocalFileIO.createFileForWriting(at: localURL)
+            defer { try? output.close() }
 
-        do {
-            var offset: UInt64 = 0
-            while true {
-                try Task.checkCancellation()
-                let buffer = try await file.read(from: offset, length: readChunkSize)
-                guard buffer.readableBytes > 0 else { break }
-                try output.write(contentsOf: Data(buffer.readableBytesView))
-                offset += UInt64(buffer.readableBytes)
-                progress(Int64(offset))
+            do {
+                var offset: UInt64 = 0
+                while true {
+                    try Task.checkCancellation()
+                    let buffer = try await file.read(from: offset, length: readChunkSize)
+                    guard buffer.readableBytes > 0 else { break }
+                    try output.write(contentsOf: Data(buffer.readableBytesView))
+                    offset += UInt64(buffer.readableBytes)
+                    progress(Int64(offset))
+                }
+                try await file.close()
+            } catch {
+                try? await file.close()
+                throw error
             }
-            try await file.close()
-        } catch {
-            try? await file.close()
-            throw error
         }
     }
 
@@ -137,22 +206,24 @@ public actor SFTPFileSystem: RemoteFileSystem {
     }
 
     private func sftpUpload(_ localURL: URL, to path: RemotePath, progress: @escaping TransferProgressHandler) async throws {
-        let input = try LocalFileIO.openForReading(localURL)
-        defer { try? input.close() }
-        let file = try await client().openFile(filePath: path.string, flags: [.write, .create, .truncate])
+        try await withSFTP { sftp in
+            let input = try LocalFileIO.openForReading(localURL)
+            defer { try? input.close() }
+            let file = try await sftp.openFile(filePath: path.string, flags: [.write, .create, .truncate])
 
-        do {
-            var offset: UInt64 = 0
-            while let data = try input.read(upToCount: LocalFileIO.chunkSize), !data.isEmpty {
-                try Task.checkCancellation()
-                try await file.write(ByteBuffer(bytes: data), at: offset)
-                offset += UInt64(data.count)
-                progress(Int64(offset))
+            do {
+                var offset: UInt64 = 0
+                while let data = try input.read(upToCount: LocalFileIO.chunkSize), !data.isEmpty {
+                    try Task.checkCancellation()
+                    try await file.write(ByteBuffer(bytes: data), at: offset)
+                    offset += UInt64(data.count)
+                    progress(Int64(offset))
+                }
+                try await file.close()
+            } catch {
+                try? await file.close()
+                throw error
             }
-            try await file.close()
-        } catch {
-            try? await file.close()
-            throw error
         }
     }
 
@@ -165,69 +236,103 @@ public actor SFTPFileSystem: RemoteFileSystem {
         guard #available(macOS 15, *) else {
             throw RemoteError.unsupportedOperation("L'élévation sudo nécessite macOS 15.")
         }
-        try await connect()
-        guard let ssh else { throw RemoteError.notConnected }
-
         let tempPath = RemotePath("/tmp/.maxftp-sudo-\(UUID().uuidString)")
         try await sftpUpload(localURL, to: tempPath, progress: progress)
 
-        let command = "sudo -S -p '' sh -c 'cat \"$1\" > \"$2\" && echo __MAXFTP_OK__' _ \(ShellCommand.quote(tempPath.string)) \(ShellCommand.quote(path.string))"
-
+        let command = Self.sudoUploadCommand(source: tempPath, destination: path)
         do {
-            var previousFailed = false
-            for attempt in 0..<3 {
-                guard let password = await sudoPasswords.password(
-                    for: configuration.serverKey,
-                    path: path,
-                    previousAttemptFailed: previousFailed
-                ) else {
-                    throw RemoteError.authenticationFailed("Authentification sudo annulée.")
-                }
-
-                var stdoutText = ""
-                var stderrText = ""
-                var commandFailed = false
-                do {
-                    try await ssh.withExec(command) { inbound, outbound in
-                        try await outbound.write(ByteBuffer(string: password + "\n"))
-                        for try await chunk in inbound {
-                            switch chunk {
-                            case .stdout(let buffer):
-                                stdoutText += String(buffer: buffer)
-                            case .stderr(let buffer):
-                                stderrText += String(buffer: buffer)
-                            }
-                        }
-                    }
-                } catch is SSHClient.CommandFailed {
-                    commandFailed = true
-                } catch let error as ChannelError where error == .alreadyClosed {
-                    // Le serveur a déjà fermé le canal à la fin de la commande.
-                }
-
-                if stdoutText.contains("__MAXFTP_OK__") && !commandFailed {
-                    try? await sftp?.remove(at: tempPath.string)
-                    return
-                }
-
-                let cleanedStderr = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let looksLikeWrongPassword = Self.isWrongSudoPassword(cleanedStderr) || (cleanedStderr.isEmpty && attempt < 2)
-                if looksLikeWrongPassword && attempt < 2 {
-                    previousFailed = true
-                    continue
-                }
-                await sudoPasswords.clear(for: configuration.serverKey)
-                throw RemoteError.serverError(
-                    code: 403,
-                    message: cleanedStderr.isEmpty ? "Échec de l'enregistrement avec sudo." : cleanedStderr
-                )
-            }
-            await sudoPasswords.clear(for: configuration.serverKey)
-            throw RemoteError.authenticationFailed("Mot de passe sudo incorrect.")
+            try await runWithSudo(
+                command: command,
+                path: path,
+                sudoPasswords: sudoPasswords,
+                failureMessage: "Échec de l'enregistrement avec sudo."
+            )
+            try? await sftp?.remove(at: tempPath.string)
         } catch {
             try? await sftp?.remove(at: tempPath.string)
             throw error
         }
+    }
+
+    private func runWithSudo(
+        command: String,
+        path: RemotePath,
+        sudoPasswords: any SudoPasswordProvider,
+        failureMessage: String
+    ) async throws {
+        guard #available(macOS 15, *) else {
+            throw RemoteError.unsupportedOperation("L'élévation sudo nécessite macOS 15.")
+        }
+        try await connect()
+        guard let ssh else { throw RemoteError.notConnected }
+
+        var previousFailed = false
+        for attempt in 0..<3 {
+            guard let password = await sudoPasswords.password(
+                for: configuration.serverKey,
+                path: path,
+                previousAttemptFailed: previousFailed
+            ) else {
+                throw RemoteError.authenticationFailed("Authentification sudo annulée.")
+            }
+
+            var stdoutText = ""
+            var stderrText = ""
+            var commandFailed = false
+            do {
+                try await ssh.withExec(command) { inbound, outbound in
+                    try await outbound.write(ByteBuffer(string: password + "\n"))
+                    for try await chunk in inbound {
+                        switch chunk {
+                        case .stdout(let buffer):
+                            stdoutText += String(buffer: buffer)
+                        case .stderr(let buffer):
+                            stderrText += String(buffer: buffer)
+                        }
+                    }
+                }
+            } catch is SSHClient.CommandFailed {
+                commandFailed = true
+            } catch let error as ChannelError where error == .alreadyClosed {
+                // Le serveur a déjà fermé le canal à la fin de la commande.
+            } catch is ChannelError {
+                throw RemoteError.connectionClosed
+            }
+
+            if stdoutText.contains("__MAXFTP_OK__") && !commandFailed {
+                return
+            }
+
+            let cleanedStderr = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let looksLikeWrongPassword = Self.isWrongSudoPassword(cleanedStderr) || (cleanedStderr.isEmpty && attempt < 2)
+            if looksLikeWrongPassword && attempt < 2 {
+                previousFailed = true
+                continue
+            }
+            await sudoPasswords.clear(for: configuration.serverKey)
+            throw RemoteError.serverError(
+                code: 403,
+                message: cleanedStderr.isEmpty ? failureMessage : cleanedStderr
+            )
+        }
+        await sudoPasswords.clear(for: configuration.serverKey)
+        throw RemoteError.authenticationFailed("Mot de passe sudo incorrect.")
+    }
+
+    static func sudoUploadCommand(source: RemotePath, destination: RemotePath) -> String {
+        "sudo -S -p '' sh -c 'cat \"$1\" > \"$2\" && echo __MAXFTP_OK__' _ \(ShellCommand.quote(source.string)) \(ShellCommand.quote(destination.string))"
+    }
+
+    static func sudoRemoveFileCommand(at path: RemotePath) -> String {
+        "sudo -S -p '' sh -c 'rm -f -- \"$1\" && echo __MAXFTP_OK__' _ \(ShellCommand.quote(path.string))"
+    }
+
+    static func sudoRemoveDirectoryCommand(at path: RemotePath) -> String {
+        "sudo -S -p '' sh -c 'rmdir -- \"$1\" && echo __MAXFTP_OK__' _ \(ShellCommand.quote(path.string))"
+    }
+
+    static func sudoRemoveTreeCommand(at path: RemotePath) -> String {
+        "sudo -S -p '' sh -c 'rm -rf -- \"$1\" && echo __MAXFTP_OK__' _ \(ShellCommand.quote(path.string))"
     }
 
     private static func isPermissionDenied(_ error: any Error) -> Bool {
