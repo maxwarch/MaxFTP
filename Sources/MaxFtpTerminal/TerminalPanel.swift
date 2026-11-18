@@ -55,7 +55,7 @@ private struct TerminalEmulator: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(session: session) }
 
     func makeNSView(context: Context) -> TerminalView {
-        let view = TerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular))
+        let view = MaxFtpTerminalView(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular))
         view.terminalDelegate = context.coordinator
         view.optionAsMetaKey = true
         context.coordinator.view = view
@@ -108,5 +108,41 @@ private struct TerminalEmulator: NSViewRepresentable {
                 NSPasteboard.general.setString(text, forType: .string)
             }
         }
+    }
+}
+
+/// Sous-classe de `TerminalView` qui garantit la saisie au pavé numérique et les raccourcis macOS
+/// (saut de mot avec ⌥←/⌥→, début/fin de ligne avec ⌘←/⌘→, suppression de mot/ligne avec ⌥⌫/⌘⌫).
+private final class MaxFtpTerminalView: TerminalView {
+    private var keyMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil && keyMonitor == nil {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, self.handleKeyDown(event) else { return event }
+                return nil
+            }
+        } else if window == nil, let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard let window, window.isKeyWindow, window.firstResponder === self,
+              event.window === window else { return false }
+
+        if let bytes = TerminalKeyMapping.shortcutBytes(keyCode: event.keyCode, modifiers: event.modifierFlags) {
+            send(bytes)
+            return true
+        }
+        let mods = event.modifierFlags.intersection([.command, .control, .option])
+        if mods.isEmpty,
+           let bytes = TerminalKeyMapping.keypadBytes(keyCode: event.keyCode, characters: event.characters) {
+            send(bytes)
+            return true
+        }
+        return false
     }
 }
