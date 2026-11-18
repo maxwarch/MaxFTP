@@ -14,7 +14,13 @@ final class ActiveModeListener: Sendable {
     }
 
     /// Ouvre un port éphémère sur `localAddress` (l'interface du canal de contrôle).
-    static func bind(localAddress: String, tls: TLSSettings?, acceptTimeout: TimeAmount = .seconds(20)) async throws -> ActiveModeListener {
+    /// Si `expectedPeerAddress` est fourni, toute connexion issue d'une autre IP est rejetée (RFC 2577).
+    static func bind(
+        localAddress: String,
+        expectedPeerAddress: String? = nil,
+        tls: TLSSettings?,
+        acceptTimeout: TimeAmount = .seconds(20)
+    ) async throws -> ActiveModeListener {
         let group = MultiThreadedEventLoopGroup.singleton
         let accepted = group.next().makePromise(of: NIOByteStream.self)
 
@@ -22,6 +28,10 @@ final class ActiveModeListener: Sendable {
             .serverChannelOption(.backlog, value: 1)
             .childChannelInitializer { child in
                 child.eventLoop.makeCompletedFuture {
+                    if let expectedPeerAddress, child.remoteAddress?.ipAddress != expectedPeerAddress {
+                        _ = child.close()
+                        return
+                    }
                     let inbound = InboundBuffer()
                     try NIOByteStream.configurePipeline(child, tls: tls, inbound: inbound)
                     accepted.succeed(NIOByteStream(channel: child, inbound: inbound))

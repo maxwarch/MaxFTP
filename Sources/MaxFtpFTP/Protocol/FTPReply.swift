@@ -26,6 +26,8 @@ struct FTPReply: Equatable, Sendable {
 ///
 /// Multi-lignes : `123-début` … lignes libres … `123 fin`.
 struct FTPReplyAccumulator {
+    static let maxLines = 1_024
+
     private var pendingCode: Int?
     private var lines: [String] = []
 
@@ -37,6 +39,9 @@ struct FTPReplyAccumulator {
                 pendingCode = nil
                 defer { lines = [] }
                 return FTPReply(code: code, lines: lines)
+            }
+            guard lines.count < Self.maxLines else {
+                throw RemoteError.protocolViolation("Réponse FTP multi-lignes trop volumineuse.")
             }
             lines.append(line)
             return nil
@@ -62,19 +67,42 @@ struct FTPReplyAccumulator {
 }
 
 /// Découpe un flux d'octets en lignes terminées par CRLF (ou LF seul, toléré).
+///
+/// Utilise un curseur de lecture (`readIndex`) pour consommer en O(1) amorti sans
+/// décaler tout le tableau à chaque ligne, et plafonne la longueur d'une ligne pour
+/// éviter tout épuisement mémoire face à un flux sans retour à la ligne.
 struct FTPLineBuffer {
+    static let maxLineLength = 64 * 1024
+
     private var bytes: [UInt8] = []
+    private var readIndex = 0
 
     mutating func append<S: Sequence>(_ data: S) where S.Element == UInt8 {
         bytes.append(contentsOf: data)
     }
 
-    mutating func nextLine() -> String? {
-        guard let newline = bytes.firstIndex(of: UInt8(ascii: "\n")) else { return nil }
+    mutating func nextLine() throws -> String? {
+        let slice = bytes[readIndex...]
+        guard let newline = slice.firstIndex(of: UInt8(ascii: "\n")) else {
+            if slice.count > Self.maxLineLength {
+                throw RemoteError.protocolViolation("Ligne de réponse FTP trop longue.")
+            }
+            return nil
+        }
+        if newline - readIndex > Self.maxLineLength {
+            throw RemoteError.protocolViolation("Ligne de réponse FTP trop longue.")
+        }
         var end = newline
-        if end > 0, bytes[end - 1] == UInt8(ascii: "\r") { end -= 1 }
-        let line = String(decoding: bytes[..<end], as: UTF8.self)
-        bytes.removeSubrange(...newline)
+        if end > readIndex, bytes[end - 1] == UInt8(ascii: "\r") { end -= 1 }
+        let line = String(decoding: bytes[readIndex..<end], as: UTF8.self)
+        readIndex = newline + 1
+        if readIndex == bytes.count {
+            bytes.removeAll(keepingCapacity: true)
+            readIndex = 0
+        } else if readIndex >= 4096 {
+            bytes.removeSubrange(..<readIndex)
+            readIndex = 0
+        }
         return line
     }
 }

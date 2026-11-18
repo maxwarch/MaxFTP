@@ -13,17 +13,28 @@ struct S3XMLNode: Equatable, Sendable {
     static func parse(_ data: Data) -> S3XMLNode? {
         let builder = Builder()
         let parser = XMLParser(data: data)
+        parser.shouldResolveExternalEntities = false
+        parser.shouldProcessNamespaces = false
+        parser.shouldReportNamespacePrefixes = false
         parser.delegate = builder
-        guard parser.parse() else { return nil }
+        guard parser.parse(), !builder.aborted else { return nil }
         return builder.root
     }
 
     private final class Builder: NSObject, XMLParserDelegate {
+        static let maxDepth = 32
+
         var stack: [S3XMLNode] = []
         var root: S3XMLNode?
+        var aborted = false
 
         func parser(_ parser: XMLParser, didStartElement name: String, namespaceURI: String?,
                     qualifiedName: String?, attributes: [String: String] = [:]) {
+            guard stack.count < Self.maxDepth else {
+                aborted = true
+                parser.abortParsing()
+                return
+            }
             stack.append(S3XMLNode(name: name))
         }
 

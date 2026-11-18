@@ -34,13 +34,25 @@ public final class BrowserModel {
     public private(set) var connectionState: ConnectionState = .disconnected
     public private(set) var configuration: ConnectionConfiguration?
     public private(set) var currentPath: RemotePath = .root
-    public private(set) var items: [RemoteItem] = []
+    public private(set) var items: [RemoteItem] = [] {
+        didSet { recomputeVisibleItems() }
+    }
+    /// Éléments filtrés et triés, dossiers en premier (comme le Finder).
+    /// Mis en cache pour éviter de retrier la liste à chaque lecture par SwiftUI (`Table`, `PathBar`).
+    public private(set) var visibleItems: [RemoteItem] = []
     public private(set) var isLoading = false
     public private(set) var history = NavigationHistory()
 
     public var selection: Set<RemoteItem.ID> = []
-    public var sortOrder: [KeyPathComparator<RemoteItem>] = [KeyPathComparator(\.name, comparator: .localizedStandard)]
-    public var showHiddenFiles = false
+    public var sortOrder: [KeyPathComparator<RemoteItem>] = [KeyPathComparator(\.name, comparator: .localizedStandard)] {
+        didSet { recomputeVisibleItems() }
+    }
+    public var showHiddenFiles = false {
+        didSet {
+            guard showHiddenFiles != oldValue else { return }
+            recomputeVisibleItems()
+        }
+    }
     public var prompt: BrowserPrompt?
     public var pendingDeletion: [RemoteItem] = []
     public var errorMessage: String?
@@ -101,19 +113,31 @@ public final class BrowserModel {
     public var canGoBack: Bool { isConnected && history.canGoBack }
     public var canGoForward: Bool { isConnected && history.canGoForward }
 
-    /// Éléments filtrés et triés, dossiers en premier (comme le Finder).
-    public var visibleItems: [RemoteItem] {
-        let filtered = showHiddenFiles ? items : items.filter { !$0.isHidden }
-        let sorted = filtered.sorted(using: sortOrder)
-        return sorted.filter(\.isDirectory) + sorted.filter { !$0.isDirectory }
+    private func recomputeVisibleItems() {
+        var directories: [RemoteItem] = []
+        var files: [RemoteItem] = []
+        directories.reserveCapacity(items.count)
+        files.reserveCapacity(items.count)
+        for item in items where showHiddenFiles || !item.isHidden {
+            if item.isDirectory {
+                directories.append(item)
+            } else {
+                files.append(item)
+            }
+        }
+        directories.sort(using: sortOrder)
+        files.sort(using: sortOrder)
+        visibleItems = directories + files
     }
 
     public var selectedItems: [RemoteItem] {
-        items.filter { selection.contains($0.id) }
+        guard !selection.isEmpty else { return [] }
+        return items.filter { selection.contains($0.id) }
     }
 
     public var singleSelectedItem: RemoteItem? {
-        selection.count == 1 ? selectedItems.first : nil
+        guard selection.count == 1, let id = selection.first else { return nil }
+        return items.first { $0.id == id }
     }
 
     // MARK: Connexion
@@ -243,7 +267,10 @@ public final class BrowserModel {
     public func refresh() async {
         let previousSelection = selection
         await load(currentPath)
-        selection = previousSelection.filter { id in items.contains { $0.id == id } }
+        if !previousSelection.isEmpty {
+            let validIDs = Set(items.lazy.map(\.id))
+            selection = previousSelection.intersection(validIDs)
+        }
     }
 
     // MARK: Terminal
@@ -272,7 +299,10 @@ public final class BrowserModel {
               isConnected, !isLoading, currentPath == path, self.fileSystem === fileSystem,
               Set(listing) != Set(items) else { return }
         items = listing
-        selection = selection.filter { id in listing.contains { $0.id == id } }
+        if !selection.isEmpty {
+            let validIDs = Set(listing.lazy.map(\.id))
+            selection = selection.intersection(validIDs)
+        }
     }
 
     /// Ouvre un signet : le dossier lui-même, ou le dossier parent avec le fichier sélectionné.
@@ -461,9 +491,14 @@ public final class BrowserModel {
         guard let fileSystem, let configuration else { throw RemoteError.notConnected }
         let url = LocalWorkspace.cachedCopyURL(for: item, host: configuration.host)
         if !FileManager.default.fileExists(atPath: url.path) {
-            let partial = url.appendingPathExtension("partial")
+            let partial = url.appendingPathExtension("partial-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: partial) }
             try await fileSystem.download(item.path, to: partial) { _ in }
-            try FileManager.default.moveItem(at: partial, to: url)
+            if FileManager.default.fileExists(atPath: url.path) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: partial)
+            } else {
+                try FileManager.default.moveItem(at: partial, to: url)
+            }
         }
         return url
     }
@@ -494,7 +529,7 @@ public final class BrowserModel {
 
     private func childPath(named name: String, in directory: RemotePath? = nil) throws -> RemotePath {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.contains("/"), trimmed != ".", trimmed != ".." else {
+        guard RemotePath.isValidEntryName(trimmed) else {
             throw RemoteError.invalidPath(name)
         }
         return (directory ?? currentPath).appending(trimmed)

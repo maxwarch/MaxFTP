@@ -36,6 +36,10 @@ public protocol RemoteFileSystem: Actor {
 
     func download(_ path: RemotePath, to localURL: URL, progress: @escaping TransferProgressHandler) async throws
     func upload(_ localURL: URL, to path: RemotePath, progress: @escaping TransferProgressHandler) async throws
+
+    func removeItem(_ item: RemoteItem) async throws
+    func walk(_ path: RemotePath) async throws -> [RemoteItem]
+    func createDirectoryIfNeeded(at path: RemotePath) async throws
 }
 
 // MARK: - Opérations composées (Template Method)

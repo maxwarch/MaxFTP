@@ -10,19 +10,40 @@ public struct RemotePath: Hashable, Comparable, Sendable, CustomStringConvertibl
     public static let root = RemotePath(components: [])
 
     public init(components: [String]) {
-        self.components = components
+        self.components = Self.normalize(components)
     }
 
     public init(_ string: String) {
+        self.components = Self.normalize(string.split(separator: "/", omittingEmptySubsequences: true))
+    }
+
+    private static func normalize<S: Sequence>(_ rawComponents: S) -> [String] where S.Element: StringProtocol {
         var result: [String] = []
-        for part in string.split(separator: "/", omittingEmptySubsequences: true) {
-            switch part {
-            case ".": continue
-            case "..": _ = result.popLast()
-            default: result.append(String(part))
+        for raw in rawComponents {
+            for part in raw.split(separator: "/", omittingEmptySubsequences: true) {
+                let cleaned = part.replacingOccurrences(of: "\0", with: "")
+                switch cleaned {
+                case "", ".": continue
+                case "..": _ = result.popLast()
+                default: result.append(cleaned)
+                }
             }
         }
-        self.components = result
+        return result
+    }
+
+    /// Indique si `name` est un nom d'entrée valide (un seul segment, sans caractère de contrôle ni `.`/`..`).
+    ///
+    /// L'inspection se fait sur `utf8` : en Swift, `"\r\n"` forme un seul `Character` (grapheme cluster),
+    /// si bien que `String.contains("\r")` et `String.contains("\n")` renverraient tous deux `false` sur `"\r\n"`.
+    public static func isValidEntryName(_ name: String) -> Bool {
+        guard !name.isEmpty, name != ".", name != ".." else { return false }
+        for byte in name.utf8 {
+            if byte == UInt8(ascii: "/") || byte == 0 || byte == 0x0A || byte == 0x0D {
+                return false
+            }
+        }
+        return true
     }
 
     public init(stringLiteral value: String) {

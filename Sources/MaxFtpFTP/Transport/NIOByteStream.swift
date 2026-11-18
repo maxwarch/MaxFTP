@@ -70,8 +70,11 @@ final class NIOByteStream: Sendable {
 
     /// Prochain bloc reçu, ou `nil` en fin de flux.
     func next() async throws -> ByteBuffer? {
-        try await withTaskCancellationHandler {
-            try await inbound.next()
+        let channel = self.channel
+        return try await withTaskCancellationHandler {
+            try await inbound.next {
+                _ = channel.setOption(ChannelOptions.autoRead, value: true)
+            }
         } onCancel: {
             inbound.fail(CancellationError())
         }
@@ -92,8 +95,12 @@ final class NIOByteStream: Sendable {
 // MARK: - Tampon de réception
 
 /// File d'attente thread-safe entre la boucle d'événements NIO (producteur)
-/// et le code `async` (consommateur unique).
+/// et le code `async` (consommateur unique), avec contrôle de flux par seuils
+/// (high / low watermark) pour borner l'empreinte mémoire lors des gros téléchargements.
 final class InboundBuffer: Sendable {
+    static let highWatermark = 2 * 1024 * 1024
+    static let lowWatermark = 512 * 1024
+
     private enum Completion {
         case finished
         case failed(any Error)
@@ -101,20 +108,32 @@ final class InboundBuffer: Sendable {
 
     private struct State {
         var chunks: [ByteBuffer] = []
+        var headIndex = 0
+        var queuedBytes = 0
+        var isReadingPaused = false
         var completion: Completion?
         var waiter: CheckedContinuation<ByteBuffer?, any Error>?
     }
 
     private let state = NIOLockedValueBox(State())
 
-    func push(_ chunk: ByteBuffer) {
+    /// Ajoute un bloc reçu. Renvoie `true` si le tampon dépasse ``highWatermark`` et que
+    /// la lecture automatique du canal (`autoRead`) doit être mise en pause.
+    @discardableResult
+    func push(_ chunk: ByteBuffer) -> Bool {
         state.withLockedValue { state in
             if let waiter = state.waiter {
                 state.waiter = nil
                 waiter.resume(returning: chunk)
-            } else {
-                state.chunks.append(chunk)
+                return false
             }
+            state.chunks.append(chunk)
+            state.queuedBytes += chunk.readableBytes
+            if !state.isReadingPaused, state.queuedBytes >= Self.highWatermark {
+                state.isReadingPaused = true
+                return true
+            }
+            return false
         }
     }
 
@@ -135,11 +154,29 @@ final class InboundBuffer: Sendable {
         }
     }
 
-    func next() async throws -> ByteBuffer? {
-        try await withCheckedThrowingContinuation { continuation in
+    func next(onResumeReading: @Sendable () -> Void = {}) async throws -> ByteBuffer? {
+        var shouldResumeReading = false
+        defer {
+            if shouldResumeReading { onResumeReading() }
+        }
+        return try await withCheckedThrowingContinuation { continuation in
             state.withLockedValue { state in
-                if !state.chunks.isEmpty {
-                    continuation.resume(returning: state.chunks.removeFirst())
+                if state.headIndex < state.chunks.count {
+                    let chunk = state.chunks[state.headIndex]
+                    state.headIndex += 1
+                    state.queuedBytes = max(0, state.queuedBytes - chunk.readableBytes)
+                    if state.headIndex == state.chunks.count {
+                        state.chunks.removeAll(keepingCapacity: true)
+                        state.headIndex = 0
+                    } else if state.headIndex >= 64 {
+                        state.chunks.removeSubrange(..<state.headIndex)
+                        state.headIndex = 0
+                    }
+                    if state.isReadingPaused, state.queuedBytes <= Self.lowWatermark {
+                        state.isReadingPaused = false
+                        shouldResumeReading = true
+                    }
+                    continuation.resume(returning: chunk)
                 } else if let completion = state.completion {
                     switch completion {
                     case .finished: continuation.resume(returning: nil)
@@ -153,7 +190,8 @@ final class InboundBuffer: Sendable {
     }
 }
 
-/// Dernier handler du pipeline : pousse les octets reçus dans l'``InboundBuffer``.
+/// Dernier handler du pipeline : pousse les octets reçus dans l'``InboundBuffer``
+/// et suspend `autoRead` lorsque le tampon atteint sa limite haute.
 final class InboundBufferHandler: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
 
@@ -164,7 +202,9 @@ final class InboundBufferHandler: ChannelInboundHandler {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        buffer.push(unwrapInboundIn(data))
+        if buffer.push(unwrapInboundIn(data)) {
+            _ = context.channel.setOption(ChannelOptions.autoRead, value: false)
+        }
     }
 
     func channelInactive(context: ChannelHandlerContext) {

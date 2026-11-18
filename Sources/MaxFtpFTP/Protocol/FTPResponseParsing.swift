@@ -13,13 +13,14 @@ enum FTPResponseParsing {
         return port
     }
 
+    private static let pasvRegex = try! NSRegularExpression(pattern: #"(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)"#)
+
     /// `227 Entering Passive Mode (192,168,1,2,19,137)` → 5001
     ///
     /// L'adresse IP annoncée est volontairement ignorée : on se reconnecte à l'hôte
     /// du canal de contrôle (évite les IP privées derrière NAT et les attaques « FTP bounce »).
     static func passivePort(from message: String) -> Int? {
-        guard let regex = try? NSRegularExpression(pattern: #"(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)"#),
-              let match = regex.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)),
+        guard let match = pasvRegex.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)),
               let p1Range = Range(match.range(at: 5), in: message),
               let p2Range = Range(match.range(at: 6), in: message),
               let p1 = Int(message[p1Range]), let p2 = Int(message[p2Range]),

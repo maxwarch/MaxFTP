@@ -79,14 +79,29 @@ public enum TransferPlanner {
         to destination: URL,
         using fileSystem: any RemoteFileSystem
     ) async throws -> TransferPlan {
+        guard !item.path.isRoot, RemotePath.isValidEntryName(item.name) else {
+            throw RemoteError.invalidPath(item.path.string)
+        }
         guard item.isDirectory else {
             return TransferPlan(steps: [.download(item.path, to: destination, size: item.size ?? 0)])
         }
 
+        let baseStandardized = destination.standardizedFileURL.path
+        let basePrefix = baseStandardized.hasSuffix("/") ? baseStandardized : baseStandardized + "/"
         var steps: [TransferPlan.Step] = [.createLocalDirectory(destination)]
         for child in try await fileSystem.walk(item.path) {
-            let relative = child.path.components.dropFirst(item.path.components.count).joined(separator: "/")
+            guard child.path.isDescendant(of: item.path) else {
+                throw RemoteError.invalidPath(child.path.string)
+            }
+            let relativeComponents = child.path.components.dropFirst(item.path.components.count)
+            guard !relativeComponents.isEmpty, relativeComponents.allSatisfy(RemotePath.isValidEntryName) else {
+                throw RemoteError.invalidPath(child.path.string)
+            }
+            let relative = relativeComponents.joined(separator: "/")
             let local = destination.appendingPathComponent(relative, isDirectory: child.isDirectory)
+            guard local.standardizedFileURL.path.hasPrefix(basePrefix) else {
+                throw RemoteError.invalidPath(child.path.string)
+            }
             if child.isDirectory {
                 steps.append(.createLocalDirectory(local))
             } else if child.kind == .file {

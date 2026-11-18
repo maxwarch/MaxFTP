@@ -25,7 +25,8 @@ struct SFTPSudoCommandTests {
         let destination = RemotePath("/etc/nginx/sites-enabled/default")
 
         let uploadCmd = SFTPFileSystem.sudoUploadCommand(source: source, destination: destination)
-        #expect(uploadCmd.contains("cat \"$1\" > \"$2\" && echo __MAXFTP_OK__"))
+        #expect(uploadCmd.hasPrefix("sudo -k -S -p ''"))
+        #expect(uploadCmd.contains("cat \"$1\" > \"$2\" && rm -f -- \"$1\" && echo __MAXFTP_OK__"))
         #expect(uploadCmd.contains("'/tmp/.maxftp-sudo-123'"))
         #expect(uploadCmd.contains("'/etc/nginx/sites-enabled/default'"))
     }

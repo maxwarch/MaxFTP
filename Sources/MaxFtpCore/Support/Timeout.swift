@@ -30,16 +30,21 @@ public func withTimeout<T: Sendable>(
                     gate.resume(with: .failure(error))
                 }
             }
-            gate.onFinish { work.cancel() }
-            Task {
+            let timer = Task {
                 let tick = Duration.milliseconds(50)
                 var remaining = duration
-                while remaining > .zero, !gate.isFinished {
+                while remaining > .zero, !gate.isFinished, !Task.isCancelled {
                     let step = min(tick, remaining)
                     try? await Task.sleep(for: step)
-                    if !isPaused() { remaining -= step }
+                    if !Task.isCancelled, !isPaused() { remaining -= step }
                 }
-                gate.resume(with: .failure(TimeoutError()))
+                if !Task.isCancelled {
+                    gate.resume(with: .failure(TimeoutError()))
+                }
+            }
+            gate.onFinish {
+                work.cancel()
+                timer.cancel()
             }
         }
     } onCancel: {

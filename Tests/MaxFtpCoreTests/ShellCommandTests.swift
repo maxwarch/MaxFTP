@@ -24,6 +24,10 @@ struct ShellCommandTests {
         ])
         let plain = ConnectionConfiguration(connectionProtocol: .sftp, host: "h", username: "", credential: .password("x"))
         #expect(ShellCommand.interactiveSSH(plain, at: nil) == ["ssh", "-t", "h"])
+
+        // Protection contre l'injection d'options SSH (CVE-2017-1000117).
+        let maliciousHost = ConnectionConfiguration(connectionProtocol: .sftp, host: "-oProxyCommand=id", username: "", credential: .anonymous)
+        #expect(ShellCommand.interactiveSSH(maliciousHost, at: nil) == ["ssh", "-t", "--", "-oProxyCommand=id"])
     }
 
     @Test func terminalScriptQuotesEveryArgumentAndNeverContainsThePassword() {

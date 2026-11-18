@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 
 /// Formatage cohérent des valeurs affichées dans toute l'app.
 enum Formatting {
+    private static let dateFormatStyle = Date.FormatStyle(date: .abbreviated, time: .shortened)
+
     static func byteCount(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
@@ -14,7 +16,7 @@ enum Formatting {
     }
 
     static func date(_ date: Date?) -> String {
-        date?.formatted(date: .abbreviated, time: .shortened) ?? "—"
+        date?.formatted(dateFormatStyle) ?? "—"
     }
 
     static func permissions(_ permissions: POSIXPermissions?) -> String {

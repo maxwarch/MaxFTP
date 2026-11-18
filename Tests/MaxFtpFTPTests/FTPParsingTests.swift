@@ -1,6 +1,7 @@
 import Foundation
 import MaxFtpCore
 @testable import MaxFtpFTP
+import NIOCore
 import Testing
 
 @Suite("Réponses FTP")
@@ -29,14 +30,22 @@ struct FTPReplyTests {
         #expect(throws: RemoteError.self) { try accumulator.consume("hello") }
     }
 
-    @Test func lineBufferHandlesSplitPackets() {
+    @Test func lineBufferHandlesSplitPackets() throws {
         var buffer = FTPLineBuffer()
         buffer.append(Array("220 Bien".utf8))
-        #expect(buffer.nextLine() == nil)
+        #expect(try buffer.nextLine() == nil)
         buffer.append(Array("venue\r\n331 Mot de passe\n".utf8))
-        #expect(buffer.nextLine() == "220 Bienvenue")
-        #expect(buffer.nextLine() == "331 Mot de passe")
-        #expect(buffer.nextLine() == nil)
+        #expect(try buffer.nextLine() == "220 Bienvenue")
+        #expect(try buffer.nextLine() == "331 Mot de passe")
+        #expect(try buffer.nextLine() == nil)
+    }
+
+    @Test func lineBufferRejectsOversizedLine() {
+        var buffer = FTPLineBuffer()
+        buffer.append(Array(repeating: UInt8(ascii: "A"), count: FTPLineBuffer.maxLineLength + 1))
+        #expect(throws: RemoteError.self) {
+            _ = try buffer.nextLine()
+        }
     }
 
     @Test func passivePorts() {
@@ -51,6 +60,43 @@ struct FTPReplyTests {
         #expect(FTPResponseParsing.quotedPath(from: #""/home/user" is current directory"#) == "/home/user")
         #expect(FTPResponseParsing.quotedPath(from: #""/dir with ""quotes""" created"#) == #"/dir with "quotes""#)
         #expect(FTPResponseParsing.quotedPath(from: "no quotes") == nil)
+    }
+
+    @Test func rejectsCRLFAndNullBytesInCommandLine() {
+        #expect(FTPFileSystem.isSafeCommandLine("RETR /pub/fichier.txt"))
+        #expect(!FTPFileSystem.isSafeCommandLine("RETR /pub/a\rb"))
+        #expect(!FTPFileSystem.isSafeCommandLine("RETR /pub/a\nb"))
+        // Grapheme cluster CRLF ("\r\n") : un seul Character en Swift, mais deux octets UTF-8.
+        #expect(!FTPFileSystem.isSafeCommandLine("RETR /pub/a\r\nDELE /pub/cible"))
+        #expect(!FTPFileSystem.isSafeCommandLine("RETR /pub/a\0b"))
+    }
+
+    @Test func inboundBufferBackpressureWatermarks() async throws {
+        let buffer = InboundBuffer()
+        let chunkSize = 1024 * 1024 // 1 Mio
+        let chunk = ByteBuffer(repeating: 0x41, count: chunkSize)
+
+        // 1 Mio < highWatermark (2 Mio) : pas de pause.
+        #expect(!buffer.push(chunk))
+        // 2 Mio >= highWatermark : demande la suspension d'autoRead.
+        #expect(buffer.push(chunk))
+        // Déjà en pause : ne redemande pas la suspension.
+        #expect(!buffer.push(chunk))
+
+        final class ResumeFlag: @unchecked Sendable { var resumed = false }
+        let flag = ResumeFlag()
+
+        // Il reste 2 Mio (> lowWatermark 512 Kio) : pas encore de reprise.
+        _ = try await buffer.next { flag.resumed = true }
+        #expect(!flag.resumed)
+
+        // Il reste 1 Mio (> lowWatermark 512 Kio) : pas encore de reprise.
+        _ = try await buffer.next { flag.resumed = true }
+        #expect(!flag.resumed)
+
+        // Il reste 0 octet (<= lowWatermark) : réactive autoRead.
+        _ = try await buffer.next { flag.resumed = true }
+        #expect(flag.resumed)
     }
 }
 
@@ -121,5 +167,20 @@ struct FTPListParserTests {
         #expect(items[1].size == 1234)
         let calendar = Calendar(identifier: .gregorian)
         #expect(calendar.component(.hour, from: items[0].modificationDate!) == 15)
+    }
+
+    @Test func rejectsTraversalEntriesInListings() {
+        let mlsd = FTPListParser.parseMLSD("""
+        type=file;size=10; ../secret.txt
+        type=file;size=10; sous/dossier.txt
+        type=file;size=10; propre.txt
+        """, in: directory)
+        #expect(mlsd.map(\.name) == ["propre.txt"])
+
+        let unix = FTPListParser.parseLIST("""
+        -rw-r--r-- 1 www www 10 Jan 31 12:00 ../secret.txt
+        -rw-r--r-- 1 www www 10 Jan 31 12:00 propre.txt
+        """, in: directory)
+        #expect(unix.map(\.name) == ["propre.txt"])
     }
 }

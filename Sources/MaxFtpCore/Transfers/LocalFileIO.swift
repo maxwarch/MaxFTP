@@ -6,10 +6,14 @@ public enum LocalFileIO {
     public static let chunkSize = 256 * 1024
 
     /// Crée (ou tronque) le fichier de destination et renvoie un handle en écriture.
-    public static func createFileForWriting(at url: URL) throws -> FileHandle {
+    public static func createFileForWriting(at url: URL, permissions: Int = 0o600) throws -> FileHandle {
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+            guard FileManager.default.createFile(
+                atPath: url.path,
+                contents: nil,
+                attributes: [.posixPermissions: permissions]
+            ) else {
                 throw RemoteError.localFileError("Création impossible : \(url.path)")
             }
             return try FileHandle(forWritingTo: url)

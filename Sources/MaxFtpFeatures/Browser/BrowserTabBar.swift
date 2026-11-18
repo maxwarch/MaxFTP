@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Barre d'onglets affichée au-dessus de l'explorateur pour basculer entre sessions ouvertes.
@@ -6,7 +7,7 @@ struct BrowserTabBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
+            HorizontalTabScrollView {
                 HStack(spacing: 4) {
                     ForEach(tabs.tabs) { tab in
                         TabItemView(
@@ -21,6 +22,7 @@ struct BrowserTabBar: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
             }
+            .frame(maxWidth: .infinity)
 
             Divider()
                 .frame(height: 18)
@@ -38,7 +40,66 @@ struct BrowserTabBar: View {
             .help("Nouvel onglet (⌘T)")
             .accessibilityLabel("Nouvel onglet")
         }
-        .background(.bar)
+        .background(.bar, ignoresSafeAreaEdges: [])
+    }
+}
+
+/// Défilement horizontal sans absorption de la safe area supérieure de `NavigationSplitView`
+/// (un `ScrollView` SwiftUI décale son contenu de la hauteur de la barre d'outils hors de `DocumentView`).
+private struct HorizontalTabScrollView<Content: View>: NSViewRepresentable {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(rootView: content)
+    }
+
+    func makeNSView(context: Context) -> TabScrollView {
+        let scrollView = TabScrollView()
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets()
+        scrollView.documentView = context.coordinator.hostingView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: TabScrollView, context: Context) {
+        context.coordinator.hostingView.rootView = content
+        scrollView.needsLayout = true
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: TabScrollView, context: Context) -> CGSize? {
+        let fitting = context.coordinator.hostingView.fittingSize
+        let width = (proposal.width?.isFinite == true) ? proposal.width! : fitting.width
+        return CGSize(width: width, height: fitting.height)
+    }
+
+    @MainActor
+    final class Coordinator {
+        let hostingView: NSHostingView<Content>
+
+        init(rootView: Content) {
+            let hosting = NSHostingView(rootView: rootView)
+            hosting.safeAreaRegions = []
+            self.hostingView = hosting
+        }
+    }
+}
+
+private final class TabScrollView: NSScrollView {
+    override func layout() {
+        super.layout()
+        guard let documentView else { return }
+        let fitting = documentView.fittingSize
+        let size = CGSize(width: fitting.width, height: contentView.bounds.height)
+        if documentView.frame.size != size || documentView.frame.origin != .zero {
+            documentView.frame = NSRect(origin: .zero, size: size)
+        }
     }
 }
 

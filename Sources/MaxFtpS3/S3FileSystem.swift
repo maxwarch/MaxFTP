@@ -1,5 +1,6 @@
 import Foundation
 import MaxFtpCore
+import os
 import UniformTypeIdentifiers
 
 /// Adaptateur pour le stockage objet compatible S3 (Cloudflare R2, AWS S3, MinIO…).
@@ -152,40 +153,33 @@ public actor S3FileSystem: RemoteFileSystem {
     public func download(_ path: RemotePath, to localURL: URL, progress: @escaping TransferProgressHandler) async throws {
         guard case .object(let bucket, let key) = S3Location(path) else { throw RemoteError.invalidPath(path.string) }
         let request = try signed(S3Request(method: "GET", bucket: bucket, key: key))
-        let bytes: URLSession.AsyncBytes, response: URLResponse
+        let delegate = DownloadProgress(progress: progress)
+        let tempURL: URL, response: URLResponse
         do {
-            (bytes, response) = try await session.bytes(for: request)
+            (tempURL, response) = try await session.download(for: request, delegate: delegate)
         } catch {
             throw Self.translate(error)
         }
+        defer { try? FileManager.default.removeItem(at: tempURL) }
 
         guard Self.isSuccess(response) else {
-            var body = Data()
-            for try await byte in bytes.prefix(64 * 1024) { body.append(byte) }
+            let body = (try? FileHandle(forReadingFrom: tempURL).read(upToCount: 64 * 1024)) ?? Data()
             throw Self.translate(status: Self.status(response), body: body)
         }
 
-        let output = try LocalFileIO.createFileForWriting(at: localURL)
-        defer { try? output.close() }
-        var buffer = Data()
-        buffer.reserveCapacity(LocalFileIO.chunkSize)
-        var written: Int64 = 0
         do {
-            for try await byte in bytes {
-                buffer.append(byte)
-                if buffer.count >= LocalFileIO.chunkSize {
-                    try Task.checkCancellation()
-                    try output.write(contentsOf: buffer)
-                    written += Int64(buffer.count)
-                    buffer.removeAll(keepingCapacity: true)
-                    progress(written)
-                }
+            let fm = FileManager.default
+            try fm.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if fm.fileExists(atPath: localURL.path) {
+                _ = try fm.replaceItemAt(localURL, withItemAt: tempURL)
+            } else {
+                try fm.moveItem(at: tempURL, to: localURL)
             }
+            let finalSize = Int64((try? localURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            progress(max(delegate.totalWritten, finalSize))
         } catch {
-            throw Self.translate(error)
+            throw RemoteError.localFileError(error.localizedDescription)
         }
-        try output.write(contentsOf: buffer)
-        progress(written + Int64(buffer.count))
     }
 
     public func upload(_ localURL: URL, to path: RemotePath, progress: @escaping TransferProgressHandler) async throws {
@@ -338,9 +332,9 @@ public actor S3FileSystem: RemoteFileSystem {
 
     // MARK: Traduction des erreurs
 
-    /// Les noms `.`/`..` ou vides (clés `a//b`) ne sont pas représentables par ``RemotePath``.
+    /// Les noms `.`/`..`, vides (clés `a//b`) ou contenant `/` ne sont pas représentables par ``RemotePath``.
     private static func isListable(_ name: String) -> Bool {
-        !name.isEmpty && name != "." && name != ".."
+        RemotePath.isValidEntryName(name)
     }
 
     private static func status(_ response: URLResponse) -> Int {
@@ -382,6 +376,26 @@ public actor S3FileSystem: RemoteFileSystem {
 
     private static func unexpected(_ data: Data) -> RemoteError {
         .protocolViolation(String(decoding: data.prefix(200), as: UTF8.self))
+    }
+}
+
+/// Remonte la progression d'un téléchargement HTTP écrit directement sur disque par CFNetwork.
+private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, Sendable {
+    let progress: TransferProgressHandler
+    private let written = OSAllocatedUnfairLock(initialState: Int64(0))
+
+    var totalWritten: Int64 { written.withLock { $0 } }
+
+    init(progress: @escaping TransferProgressHandler) {
+        self.progress = progress
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        written.withLock { $0 = totalBytesWritten }
+        progress(totalBytesWritten)
     }
 }
 

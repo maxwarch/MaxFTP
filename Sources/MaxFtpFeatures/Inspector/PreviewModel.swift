@@ -64,14 +64,22 @@ final class PreviewModel {
             let url = try await browser.localCopy(of: item)
             try Task.checkCancellation()
             let type = FileIcons.contentType(for: item)
-            if let loaded = Self.textPayload(for: url, type: type, maxCharacters: maxTextCharacters) {
-                content = loaded.content
+            let maxChars = maxTextCharacters
+
+            // Lecture disque, détection binaire et rendu Markdown hors du MainActor.
+            let loadedText = await Task.detached(priority: .userInitiated) {
+                Self.loadTextPayload(for: url, type: type, maxCharacters: maxChars)
+            }.value
+            try Task.checkCancellation()
+
+            if let loaded = loadedText {
+                content = loaded.attributedMarkdown.map(Content.markdown) ?? .text(loaded.shownText)
                 isMarkdownFile = loaded.isMarkdown
                 isTruncated = loaded.isTruncated
                 canEdit = !loaded.isTruncated
-                originalText = loaded.isTruncated ? "" : loaded.rawText
+                originalText = loaded.rawText
             } else {
-                content = Self.content(for: url, type: type, maxCharacters: maxTextCharacters)
+                content = Self.content(for: url, type: type, maxCharacters: maxChars)
                 canEdit = false
                 isTruncated = false
                 originalText = ""
@@ -121,24 +129,32 @@ final class PreviewModel {
         saveError = nil
     }
 
+    private struct TextPayload: Sendable {
+        let shownText: String
+        let attributedMarkdown: AttributedString?
+        let rawText: String
+        let isMarkdown: Bool
+        let isTruncated: Bool
+    }
+
     static func content(for url: URL, type: UTType, maxCharacters: Int) -> Content {
         if type.conforms(to: .image), let image = NSImage(contentsOf: url) {
             return .image(image)
         }
-        if let loaded = textPayload(for: url, type: type, maxCharacters: maxCharacters) {
-            return loaded.content
+        if let loaded = loadTextPayload(for: url, type: type, maxCharacters: maxCharacters) {
+            return loaded.attributedMarkdown.map(Content.markdown) ?? .text(loaded.shownText)
         }
         return .quickLook(url)
     }
 
-    private static func textPayload(
+    nonisolated private static func loadTextPayload(
         for url: URL,
         type: UTType,
         maxCharacters: Int
-    ) -> (content: Content, rawText: String, isMarkdown: Bool, isTruncated: Bool)? {
+    ) -> TextPayload? {
         let isKnownText = type.conforms(to: .text) || type.conforms(to: .sourceCode) || type.conforms(to: .json) || type == .data
         guard isKnownText || type.isDynamic,
-              let data = try? Data(contentsOf: url),
+              let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               !data.contains(0),
               let text = String(data: data, encoding: .utf8) else {
             return nil
@@ -146,8 +162,13 @@ final class PreviewModel {
         let truncated = text.count > maxCharacters
         let shown = truncated ? String(text.prefix(maxCharacters)) + "\n…" : text
         let markdown = isMarkdown(url: url, type: type)
-        let content: Content = markdown ? .markdown(MarkdownRenderer.render(shown)) : .text(shown)
-        return (content, text, markdown, truncated)
+        return TextPayload(
+            shownText: shown,
+            attributedMarkdown: markdown ? MarkdownRenderer.render(shown) : nil,
+            rawText: truncated ? "" : text,
+            isMarkdown: markdown,
+            isTruncated: truncated
+        )
     }
 
     nonisolated static func isMarkdown(url: URL, type: UTType) -> Bool {

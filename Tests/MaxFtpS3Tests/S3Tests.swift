@@ -126,6 +126,12 @@ struct S3ResponseTests {
         #expect(S3RequestBody.createBucket(region: "eu-west-3") != nil)
     }
 
+    @Test func rejectsDeeplyNestedOrExternalEntityXML() {
+        let deepOpen = (0..<40).map { "<n\($0)>" }.joined()
+        let deepClose = (0..<40).reversed().map { "</n\($0)>" }.joined()
+        #expect(S3XMLNode.parse(Data((deepOpen + deepClose).utf8)) == nil)
+    }
+
     @Test func partSizeStaysUnderPartLimit() {
         let mebibyte: Int64 = 1024 * 1024
         #expect(S3Multipart.partSize(for: 200 * mebibyte) == 16 * mebibyte)

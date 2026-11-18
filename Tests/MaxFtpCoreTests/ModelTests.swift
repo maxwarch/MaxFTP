@@ -14,8 +14,21 @@ struct RemotePathTests {
 
     @Test func normalizesDotsAndSlashes() {
         #expect(RemotePath("/var//www/./site/../html/").string == "/var/www/html")
+        #expect(RemotePath(components: ["var", ".", "www", "site", "..", "html/sub"]).string == "/var/www/html/sub")
         #expect(RemotePath("").isRoot)
         #expect(RemotePath("/..").isRoot)
+    }
+
+    @Test func validatesEntryNames() {
+        #expect(RemotePath.isValidEntryName("rapport.pdf"))
+        #expect(RemotePath.isValidEntryName(".env"))
+        #expect(!RemotePath.isValidEntryName(""))
+        #expect(!RemotePath.isValidEntryName("."))
+        #expect(!RemotePath.isValidEntryName(".."))
+        #expect(!RemotePath.isValidEntryName("../secret"))
+        #expect(!RemotePath.isValidEntryName("a/b"))
+        #expect(!RemotePath.isValidEntryName("a\0b"))
+        #expect(!RemotePath.isValidEntryName("a\r\nb"))
     }
 
     @Test func navigation() {

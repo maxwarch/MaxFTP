@@ -49,6 +49,7 @@ public struct KeychainSecretStore: SecretStore {
             var item = baseQuery(account: account)
             item[kSecValueData as String] = data
             item[kSecAttrLabel as String] = "MaxFtp"
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
             let addStatus = SecItemAdd(item as CFDictionary, nil)
             guard addStatus == errSecSuccess else { throw KeychainError(status: addStatus) }
         default:

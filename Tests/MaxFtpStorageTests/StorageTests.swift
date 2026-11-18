@@ -30,6 +30,11 @@ struct StorageTests {
         #expect(document["schemaVersion"] as? Int == 1)
         let bookmark = try #require((document["bookmarks"] as? [[String: Any]])?.first)
         #expect(Set(bookmark.keys).isDisjoint(with: ["password", "secret", "passphrase"]))
+
+        let filePerms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        #expect(filePerms == 0o600)
+        let dirPerms = try FileManager.default.attributesOfItem(atPath: url.deletingLastPathComponent().path)[.posixPermissions] as? Int
+        #expect(dirPerms == 0o700)
     }
 
     @Test func hostKeyStoreReplacesKeyOfSameType() throws {

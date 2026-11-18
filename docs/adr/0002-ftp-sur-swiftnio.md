@@ -14,6 +14,7 @@ confiné dans `MaxFtpFTP/Transport` (`NIOByteStream`, `ActiveModeListener`).
   le canal de données. Les serveurs qui l'exigent (vsftpd avec `require_ssl_reuse=YES`,
   sa valeur par défaut) refuseront les transferts FTPS. Contournement côté serveur :
   `require_ssl_reuse=NO`. Correctif futur : implémenter la reprise de session.
-- Pas de contrôle de flux en réception : un téléchargement très rapide vers un disque
-  lent est bufferisé en mémoire (`InboundBuffer`). Acceptable pour l'usage visé.
+- Contrôle de flux en réception : `InboundBuffer` suspend `ChannelOptions.autoRead` au-delà de
+  2 Mio en attente et le réactive sous 512 Kio, ce qui borne l'empreinte mémoire lors de
+  téléchargements rapides vers un disque lent.
 - Remplacer NIO par Network.framework ne toucherait que `Transport/`.

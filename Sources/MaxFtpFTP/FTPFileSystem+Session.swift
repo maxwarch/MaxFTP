@@ -117,9 +117,15 @@ extension FTPFileSystem {
         try await command(line, expecting: [code])
     }
 
+    /// Indique si une ligne de commande FTP est exempte d'octets CR, LF ou NUL.
+    /// (Vérifié sur `utf8` car `"\r\n"` est un seul `Character` en Swift : `contains("\r")` y vaudrait `false`.)
+    static func isSafeCommandLine(_ line: String) -> Bool {
+        !line.utf8.contains { $0 == 0x0D || $0 == 0x0A || $0 == 0x00 }
+    }
+
     private func send(_ line: String) async throws {
-        // Un CR/LF dans un nom de fichier permettrait d'injecter des commandes.
-        guard !line.contains("\r"), !line.contains("\n") else {
+        // Un CR/LF ou octet nul dans un nom de fichier permettrait d'injecter ou tronquer des commandes.
+        guard Self.isSafeCommandLine(line) else {
             throw RemoteError.invalidPath(line)
         }
         guard let control else { throw RemoteError.notConnected }
@@ -147,7 +153,7 @@ extension FTPFileSystem {
 
     private func readLine() async throws -> String {
         while true {
-            if let line = lineBuffer.nextLine() { return line }
+            if let line = try lineBuffer.nextLine() { return line }
             guard let control else { throw RemoteError.notConnected }
             guard let chunk = try await control.next() else {
                 await closeSession(sendQuit: false)
@@ -212,7 +218,8 @@ extension FTPFileSystem {
 
         case .active:
             guard let localIP = control?.channel.localAddress?.ipAddress else { throw RemoteError.notConnected }
-            let listener = try await ActiveModeListener.bind(localAddress: localIP, tls: tls)
+            let peerIP = control?.channel.remoteAddress?.ipAddress
+            let listener = try await ActiveModeListener.bind(localAddress: localIP, expectedPeerAddress: peerIP, tls: tls)
             do {
                 try await command(try listener.announceCommand, expecting: 200)
                 let reply = try await command(commandLine)

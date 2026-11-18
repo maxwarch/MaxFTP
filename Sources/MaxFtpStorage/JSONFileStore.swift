@@ -33,11 +33,7 @@ public final class JSONFileStore<Value: Codable & Sendable>: @unchecked Sendable
 
     public func write(_ value: Value) throws {
         try lock.withLock {
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try encoder.encode(value).write(to: fileURL, options: .atomic)
+            try writeUnlocked(value)
         }
     }
 
@@ -49,12 +45,19 @@ public final class JSONFileStore<Value: Codable & Sendable>: @unchecked Sendable
                 value = try decoder.decode(Value.self, from: Data(contentsOf: fileURL))
             }
             try transform(&value)
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try encoder.encode(value).write(to: fileURL, options: .atomic)
+            try writeUnlocked(value)
         }
+    }
+
+    private func writeUnlocked(_ value: Value) throws {
+        let directory = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try encoder.encode(value).write(to: fileURL, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }
 }
 

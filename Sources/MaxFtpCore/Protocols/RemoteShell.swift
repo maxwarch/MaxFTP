@@ -41,7 +41,13 @@ public enum ShellCommand {
             arguments += ["-i", key.path]
         }
         let user = configuration.username
-        arguments.append(user.isEmpty ? configuration.host : "\(user)@\(configuration.host)")
+        let destination = user.isEmpty ? configuration.host : "\(user)@\(configuration.host)"
+        // Un hôte ou utilisateur commençant par `-` serait interprété comme une option par `ssh`
+        // (ex. `-oProxyCommand=…`) : `--` clôt explicitement la liste des options.
+        if destination.hasPrefix("-") {
+            arguments.append("--")
+        }
+        arguments.append(destination)
         if let path {
             // Le dossier est cité pour le shell distant ; `exec $SHELL -l` garde un shell de connexion.
             arguments.append("cd -- \(quote(path.string)) && exec \"$SHELL\" -l")

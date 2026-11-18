@@ -78,6 +78,18 @@ struct TransferTests {
         try Data().write(to: original)
         #expect(LocalFileIO.uniqueURL(for: original).lastPathComponent == "photo 2.jpg")
     }
+
+    @Test func downloadPlanRejectsRootItem() async {
+        let server = InMemoryFileSystem()
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        await #expect(throws: RemoteError.self) {
+            _ = try await TransferPlanner.downloadPlan(
+                for: RemoteItem(path: .root, kind: .directory),
+                to: destination,
+                using: server
+            )
+        }
+    }
 }
 
 final class ProgressRecorder: @unchecked Sendable {

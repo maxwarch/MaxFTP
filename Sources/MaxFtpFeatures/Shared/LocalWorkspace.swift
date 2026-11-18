@@ -5,9 +5,27 @@ import MaxFtpCore
 
 /// Emplacements temporaires locaux (aperçus, édition externe) et panneaux AppKit.
 @MainActor
-enum LocalWorkspace {
-    private static var root: URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("MaxFtp", isDirectory: true)
+public enum LocalWorkspace {
+    static var root: URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("MaxFtp", isDirectory: true)
+        try? FileManager.default.createDirectory(
+            at: url,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        return url
+    }
+
+    /// Nom de fichier local assaini pour empêcher toute traversée de chemin hors du dossier de travail.
+    static func safeFileName(for item: RemoteItem) -> String {
+        let candidate = item.name
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "\0", with: "_")
+        if candidate.isEmpty || candidate == "." || candidate == ".." {
+            return "file"
+        }
+        return candidate
     }
 
     /// Copie locale stable d'un fichier distant : même hôte + chemin + taille + date ⇒ même URL.
@@ -15,12 +33,18 @@ enum LocalWorkspace {
     static func cachedCopyURL(for item: RemoteItem, host: String) -> URL {
         let key = "\(host)|\(item.path.string)|\(item.size ?? -1)|\(item.modificationDate?.timeIntervalSince1970 ?? 0)"
         let digest = SHA256.hash(data: Data(key.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
-        return root.appendingPathComponent("Previews/\(digest)/\(item.name)")
+        return root.appendingPathComponent("Previews/\(digest)/\(safeFileName(for: item))")
     }
 
     /// Dossier neuf pour une session d'édition externe.
     static func editingURL(for item: RemoteItem) -> URL {
-        root.appendingPathComponent("Editing/\(UUID().uuidString)/\(item.name)")
+        root.appendingPathComponent("Editing/\(UUID().uuidString)/\(safeFileName(for: item))")
+    }
+
+    /// Supprime l'ensemble des fichiers temporaires (aperçus, éditions externes, scripts terminal) à la fermeture de l'app.
+    public static func cleanUpTemporaryFiles() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("MaxFtp", isDirectory: true)
+        try? FileManager.default.removeItem(at: url)
     }
 
     static func chooseFilesToUpload() -> [URL] {

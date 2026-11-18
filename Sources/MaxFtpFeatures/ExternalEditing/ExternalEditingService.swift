@@ -40,7 +40,15 @@ final class ExternalEditingService {
     }
 
     func stopAll() {
-        sessions.values.forEach { $0.task.cancel() }
+        let editingRoot = LocalWorkspace.root.appendingPathComponent("Editing", isDirectory: true).standardizedFileURL.path
+        for (url, session) in sessions {
+            session.task.cancel()
+            // Supprime la copie temporaire si elle provient du dossier d'édition de MaxFtp.
+            let parent = url.deletingLastPathComponent().standardizedFileURL
+            if parent.path.hasPrefix(editingRoot + "/") {
+                try? FileManager.default.removeItem(at: parent)
+            }
+        }
         sessions.removeAll()
     }
 
