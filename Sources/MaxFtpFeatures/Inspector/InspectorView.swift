@@ -12,8 +12,11 @@ struct InspectorView: View {
         Group {
             if let item = browser.singleSelectedItem {
                 VStack(alignment: .leading, spacing: 0) {
-                    MetadataSection(item: item)
-                        .padding()
+                    MetadataSection(item: item) {
+                        browser.copyPathToPasteboard(item)
+                    }
+                    .padding()
+                    .id(item.id)
                     Divider()
                     PreviewSection(item: item, preview: preview, browser: browser)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -36,6 +39,7 @@ struct InspectorView: View {
 
 private struct MetadataSection: View {
     let item: RemoteItem
+    let onCopyPath: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -64,7 +68,13 @@ private struct MetadataSection: View {
                 if let target = item.symbolicLinkTarget {
                     row("Cible", target)
                 }
-                row("Chemin", item.path.string)
+                GridRow {
+                    Text("Chemin").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(item.path.string).textSelection(.enabled).lineLimit(3)
+                        CopyPathButton(path: item.path.string, action: onCopyPath)
+                    }
+                }
             }
             .font(.callout)
         }
@@ -238,7 +248,15 @@ private struct CurrentFolderOverview: View {
                 if summary.hiddenCount > 0 {
                     row("Cachés", "\(summary.hiddenCount)")
                 }
-                row("Chemin", browser.currentPath.string)
+                GridRow {
+                    Text("Chemin").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(browser.currentPath.string).textSelection(.enabled).lineLimit(3)
+                        CopyPathButton(path: browser.currentPath.string) {
+                            browser.copyPathToPasteboard(browser.currentPath)
+                        }
+                    }
+                }
             }
             .font(.callout)
 
@@ -258,6 +276,30 @@ private struct CurrentFolderOverview: View {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
             Text(value).textSelection(.enabled).lineLimit(3)
         }
+    }
+}
+
+private struct CopyPathButton: View {
+    let path: String
+    let action: () -> Void
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            action()
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                copied = false
+            }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+        }
+        .buttonStyle(.plain)
+        .help("Copier le chemin")
+        .accessibilityLabel("Copier le chemin")
+        .onChange(of: path) { copied = false }
     }
 }
 

@@ -482,8 +482,12 @@ public final class BrowserModel {
     }
 
     public func copyPathToPasteboard(_ item: RemoteItem) {
+        copyPathToPasteboard(item.path)
+    }
+
+    public func copyPathToPasteboard(_ path: RemotePath) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(item.path.string, forType: .string)
+        NSPasteboard.general.setString(path.string, forType: .string)
     }
 
     // MARK: Utilitaires
