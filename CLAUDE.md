@@ -18,5 +18,5 @@ Client FTP/FTPS/SFTP natif macOS. Lire ARCHITECTURE.md avant de modifier le code
 - Nouveau champ de `ServerBookmark` : `decodeIfPresent` + valeur par défaut.
 - Pas de macros nécessitant Xcode (`@Entry`, `#Preview`) : le projet doit compiler avec
   les seuls Command Line Tools.
-- UI et messages d'erreur en français ; commentaires en français.
+- Réponses de l'agent en français ; UI, messages d'erreur et commentaires en français.
 - Décision structurante → nouvelle ADR dans `docs/adr/`.
