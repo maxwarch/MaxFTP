@@ -28,4 +28,11 @@ struct TerminalKeyMappingTests {
         // Sans modificateur : pas d'interception.
         #expect(TerminalKeyMapping.shortcutBytes(keyCode: UInt16(kVK_LeftArrow), modifiers: []) == nil)
     }
+
+    @Test func detectsClearConsoleShortcut() {
+        #expect(TerminalKeyMapping.isClearConsoleShortcut(keyCode: UInt16(kVK_ANSI_K), modifiers: .command))
+        #expect(!TerminalKeyMapping.isClearConsoleShortcut(keyCode: UInt16(kVK_ANSI_K), modifiers: [.command, .shift]))
+        #expect(!TerminalKeyMapping.isClearConsoleShortcut(keyCode: UInt16(kVK_ANSI_K), modifiers: .control))
+        #expect(!TerminalKeyMapping.isClearConsoleShortcut(keyCode: UInt16(kVK_ANSI_L), modifiers: .command))
+    }
 }

@@ -61,4 +61,10 @@ enum TerminalKeyMapping {
 
         return nil
     }
+
+    /// Indique si la frappe correspond au raccourci macOS d'effacement de la console (`⌘K`).
+    static func isClearConsoleShortcut(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
+        let relevant = modifiers.intersection([.command, .option, .control, .shift])
+        return relevant == .command && Int(keyCode) == kVK_ANSI_K
+    }
 }

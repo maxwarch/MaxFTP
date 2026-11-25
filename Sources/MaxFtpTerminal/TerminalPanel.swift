@@ -133,6 +133,10 @@ private final class MaxFtpTerminalView: TerminalView {
         guard let window, window.isKeyWindow, window.firstResponder === self,
               event.window === window else { return false }
 
+        if TerminalKeyMapping.isClearConsoleShortcut(keyCode: event.keyCode, modifiers: event.modifierFlags) {
+            clearConsole()
+            return true
+        }
         if let bytes = TerminalKeyMapping.shortcutBytes(keyCode: event.keyCode, modifiers: event.modifierFlags) {
             send(bytes)
             return true
@@ -144,5 +148,36 @@ private final class MaxFtpTerminalView: TerminalView {
             return true
         }
         return false
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let copyItem = NSMenuItem(title: "Copier", action: #selector(copy(_:)), keyEquivalent: "")
+        copyItem.target = self
+        menu.addItem(copyItem)
+
+        let pasteItem = NSMenuItem(title: "Coller", action: #selector(paste(_:)), keyEquivalent: "")
+        pasteItem.target = self
+        menu.addItem(pasteItem)
+
+        menu.addItem(.separator())
+
+        let clearItem = NSMenuItem(title: "Effacer la console", action: #selector(clearConsoleAction(_:)), keyEquivalent: "k")
+        clearItem.keyEquivalentModifierMask = [.command]
+        clearItem.target = self
+        menu.addItem(clearItem)
+        return menu
+    }
+
+    @objc private func clearConsoleAction(_ sender: Any?) {
+        clearConsole()
+    }
+
+    private func clearConsole() {
+        getTerminal().clearScrollback()
+        // Efface l'écran visible (ESC[2J) et replace le curseur en haut à gauche (ESC[H),
+        // puis envoie Ctrl+L (0x0C) pour que le shell réaffiche l'invite de commande.
+        feed(byteArray: ArraySlice([0x1b, 0x5b, 0x32, 0x4a, 0x1b, 0x5b, 0x48]))
+        send([0x0c])
     }
 }
